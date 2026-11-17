@@ -1,0 +1,197 @@
+== nolly
+# 41
+NOLLYWOOD
+NollyFund
+New_Nollywood
+Nollywood_Babylon
+Nollywood_Reinvented
+Gbege_(Nollywood_movie)
+Gone_(Nollywood_film)
+Kesari_(Nollywood_film)
+Lucifer_(Nollywood_film)
+Mama_of_Nollywood
+== genevieve
+# 3
+Genevieve_Nnaji
+== lagos
+# 40
+Lagos_Cougars
+Lagos_Real_Fake_Life
+Okon_Lagos
+Christmas_in_Lagos
+Gangs_of_Lagos
+Husbands_of_Lagos
+One_Lagos_Night
+2_Weeks_in_Lagos
+Crime_and_Justice_Lagos
+Diary_of_a_Lagos_Girl
+== yoruba
+# 6
+Yoruba-language_film
+Merry_Men:_The_Real_Yoruba_Demons
+== igbo
+# 3
+Browny_Igboegwu
+Christy_Essien-Igbokwe
+Ifeanyi_Emmanuel_Igboke
+== living in
+# 2
+Living_in_Bondage
+Living_in_Bondage_2
+== kunle
+# 20
+Kunle_Afolayan
+Kunle_Bamtefa
+Kunle_Falodun
+Kunle_Idowu
+Kunle_Remi
+== best
+# 100
+Best_Of_Nollywood_Awards
+Our_Best_Friend's_Wedding
+2009_Best_of_Nollywood_Awards
+2010_Best_Of_Nollywood_Awards
+2011_Best_of_Nollywood_Awards
+2012_Best_of_Nollywood_Awards
+2013_Best_of_Nollywood_Awards
+2014_Best_of_Nollywood_Awards
+2015_Best_of_Nollywood_Awards
+2016_Best_of_Nollywood_Awards
+== africa movie
+# 50
+Africa_Movie_Academy_Award
+Africa_Movie_Academy_Award_for_Best_Actor
+Africa_Movie_Academy_Award_for_Best_Animation
+Africa_Movie_Academy_Award_for_Best_Cinematography
+Africa_Movie_Academy_Award_for_Best_Director
+Africa_Movie_Academy_Award_for_Best_Documentary
+Africa_Movie_Academy_Award_for_Best_Editing
+Africa_Movie_Academy_Award_for_Best_Film
+Africa_Movie_Academy_Award_for_Best_Makeup
+Africa_Movie_Academy_Award_for_Best_Screenplay
+== netflix
+# 6
+Postcards_(Netflix_series)
+Blood_Sisters_(Nigerian_Netflix_Series)
+== comedy
+# 3
+Mark_Angel_Comedy
+== the wedding
+# 3
+The_Wedding_Party_2
+The_Wedding_Party_(2016_film)
+The_Wedding_Ring_(2016_film)
+== omotola
+# 3
+Omotola
+== ramsey
+# 3
+Ramsey_Noah
+== funke
+# 10
+Funke_Adesiyan
+Funke_Akindele
+Beatrice_Funke_Ogunmola
+== television
+# 20
+Silverbird_Television
+Aiyetoro_town_(Television_series)
+Independent_Television_Producers_of_Nigeria
+Mainframe_Films_and_Television_Productions
+I_Need_to_Know_(television_series)
+== box
+# 10
+Amstel_Malta_Box_Office
+List_of_Black_Panther_box_office_achievements
+List_of_box_office_records_set_by_Black_Panther
+Highest_grossing_films_in_The_Nigerian_box_office_by_Year
+== direct
+# 9
+Director_K
+Director_Mattmax
+Director_Pink
+Abula_(video_director)
+Chinonye_Chukwu_(director)
+Sesan_(video_director)
+Directors_Guild_of_Nigeria
+List_of_Nigerian_film_directors
+Africa_Movie_Academy_Award_for_Best_Director
+== nigerian
+# 300
+Nigerian_Cinema
+Nigerian_Idol
+Nigerian_Voice
+Nigerian_New_Wave
+Nigerian_Prince_(film)
+Nigerian_Idol_(season_6)
+Nigerian_Idol_(season_7)
+Nigerian_films_of_2015
+British_Nigerian_cinema
+Faze_(Nigerian_Musician)
+== pete
+# 10
+Pete_Edochie
+Clarence_Peters
+Fatomilola,_Peter
+Princess_Peters
+Bolanle_Austen-Peters
+Peter_Onwuzurike_Onyehidelam
+Robert_O._Peters
+Susan_Peters_(Nigerian_Actress)
+== richard
+# 9
+Richard_Mofe_Damijo
+Ayodeji_Richard_Makun
+Remi_Vaughan-Richards
+== october
+# 7
+October_1_(film)
+Dark_October
+== king of
+# 3
+King_of_Boys
+King_of_Boys:_Return_of_the_King
+King_of_Thieves_(Agesinkole)
+== lion
+# 8
+The_Lion_of_Bourdilion
+Lions_of_'76
+Lionheart_(2018_film)
+Funmilayo:Lioness_of_Lisabi
+== film fest
+# 4
+Africa_International_Film_Festival
+Eko_International_Film_Festival
+ION_International_Film_Festival
+Lights_Camera_Africa_Film_Festival
+== mercy
+# 30
+Mercy_Aigbe
+Mercy_Chinwo
+Mercy_Eke
+Mercy_Johnson
+Mercy_Ada_Jesus
+Mercy_Ima_Macjoe
+Finding_Mercy
+Son_of_Mercy_(film)
+== the fig
+# 1
+The_Figurine
+== cinema of
+# 6
+Cinema_of_Nigeria
+Cinema_of_British_Nigeria
+Cinema_of_Northern_Nigeria
+Golden_Age_of_Nigerian_Cinema
+History_of_cinema_in_Nigeria
+New_Wave_of_Nigerian_cinema
+== born
+# 3
+Lisabi:_A_Legend_Is_Born
+== amvca
+# 20
+AMVCA
+AMVCA_8
+AMVCA_Trailblazer_Award
+AMVCA_Industry_Merit_Award
+AMVCA_for_Best_Overall_Movie

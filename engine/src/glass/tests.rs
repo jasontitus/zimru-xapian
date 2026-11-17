@@ -1,10 +1,12 @@
-//! The reader against the real indexes of the climate archive (`just testdata`),
+// Modified for the standalone zimru-xapian tools on 2026-11-17. See PROVENANCE.md.
+//! The reader against the real indexes of the climate archive,
 //! values decoded independently with `xapian-delve`.
 
 use super::*;
 use crate::testdata::{climate, index};
 
 #[test]
+#[ignore = "requires the two Kiwix fixtures from tests/real_archives.py"]
 fn version_block() {
     let a = climate();
     let ft = index(&a, true);
@@ -30,6 +32,7 @@ fn version_block() {
 }
 
 #[test]
+#[ignore = "requires the two Kiwix fixtures from tests/real_archives.py"]
 fn docdata_metadata_terms() {
     let a = climate();
     let ft = index(&a, true);
@@ -56,6 +59,7 @@ fn docdata_metadata_terms() {
 }
 
 #[test]
+#[ignore = "requires the two Kiwix fixtures from tests/real_archives.py"]
 fn postlists_and_doclens() {
     let a = climate();
     let ft = index(&a, true);
@@ -96,6 +100,7 @@ fn postlists_and_doclens() {
 }
 
 #[test]
+#[ignore = "requires the two Kiwix fixtures from tests/real_archives.py"]
 fn values_and_positions() {
     let a = climate();
     let ft = index(&a, true);
@@ -136,9 +141,10 @@ fn round_trip(b: &write::Builder, name: &str) -> Db {
     b.write(&mut out, *b"0123456789abcdef").unwrap();
     let bytes = out.into_inner();
     assert_eq!(bytes.len() % write::BLOCKSIZE, 0);
-    let path = std::env::temp_dir().join(format!("zimfile-{name}.glass"));
-    std::fs::write(&path, &bytes).unwrap();
     if let Ok(check) = std::env::var("XAPIAN_CHECK") {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join(format!("{name}.glass"));
+        std::fs::write(&path, &bytes).unwrap();
         let o = std::process::Command::new(check)
             .arg(&path)
             .output()

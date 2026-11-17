@@ -1,0 +1,360 @@
+== nollywood
+# 1249
+Nollywood
+Best_of_Nollywood_Awards
+Nollywood_Reinvented
+Nollywood_Movies_Awards
+Welcome_to_Nollywood
+2021_Best_of_Nollywood_Awards
+2010_Best_of_Nollywood_Awards
+2017_Best_of_Nollywood_Awards
+2011_Best_of_Nollywood_Awards
+2012_Best_of_Nollywood_Awards
+== genevieve nnaji
+# 109
+Genevieve_Nnaji
+Road_to_Yesterday_(film)
+Lionheart_(2018_film)
+Chinny_Onwugbenu
+Letters_to_a_Stranger
+Ramsey_Nouah
+Girls_Cot
+Ijé
+Weekend_Getaway
+Tango_with_Me
+== lagos
+# 1541
+Gangs_of_Lagos
+Christmas_in_Lagos
+Philip_Begho
+The_Real_Housewives_of_Lagos
+Lagos_Real_Fake_Life
+Two_Weeks_in_Lagos
+Husbands_of_Lagos
+Crime_and_Justice_Lagos
+Mabel_Oboh
+One_Lagos_Night
+== yoruba film
+# 530
+Merry_Men:_The_Real_Yoruba_Demons
+Kelvin_Ikeduba
+Akinwunmi_Isola
+Adebayo_Faleti
+Ronke_Odusanya
+Hubert_Ogunde
+Lateef_Adedimeji
+Olaniyi_Afonja
+Abiodun_Duro-Ladipo
+Tope_Alabi
+== igbo
+# 362
+Chetanna
+Áfàméfùnà:_An_Nwa_Boi_Story
+Paul_Igwe
+Chinwe_Isaac
+2016_Best_of_Nollywood_Awards
+Africa_Movie_Academy_Award_for_Best_Film_in_an_African_Language
+Nelly_Uchendu
+Echezonachukwu_Nduka
+Nneka_the_Pretty_Serpent_(1994_film)
+Chacha_Eke
+== living in bondage
+# 68
+Living_in_Bondage:_Breaking_Free
+Living_in_Bondage
+2020_Best_of_Nollywood_Awards
+2020_Africa_Magic_Viewers'_Choice_Awards
+Charles_Okpaleke
+Swanky_JKA
+Ramsey_Nouah
+Nicole_Asinugo
+Okey_Ogunjiofor
+Jennifer_Okere
+== kunle afolayan
+# 130
+Kunle_Afolayan
+October_1_(film)
+Aníkúlápó
+Irapada
+Ijogbon
+Mokalik
+Omugwo_(film)
+The_Figurine
+Phone_Swap
+Roti_(2017_film)
+== best actress award
+# 600
+Africa_Magic_Viewers'_Choice_Awards
+Wunmi_Mosaku
+City_People_Entertainment_Awards
+Rita_Dominic
+Nse_Ikpe-Etim
+Chioma_Chukwuka
+Funke_Akindele
+Africa_Movie_Academy_Award_for_Best_Actress_in_a_Supporting_Role
+Stephanie_Okereke_Linus
+Queen_Nwokoye
+== africa movie academy awards
+# 500
+Africa_Movie_Academy_Awards
+Africa_Movie_Academy_Award_for_Best_Actor_in_a_Leading_Role
+10th_Africa_Movie_Academy_Awards
+7th_Africa_Movie_Academy_Awards
+8th_Africa_Movie_Academy_Awards
+9th_Africa_Movie_Academy_Awards
+6th_Africa_Movie_Academy_Awards
+5th_Africa_Movie_Academy_Awards
+4th_Africa_Movie_Academy_Awards
+12th_Africa_Movie_Academy_Awards
+== netflix
+# 255
+Òlòtūré
+Dark_October
+SLK_(comedian)
+Lionheart_(2018_film)
+Hijack_'93
+The_Mystic_River
+Man_of_God_(2022_film)
+Castle_&_Castle
+Jagun_Jagun
+Lisabi:_A_Legend_Is_Born
+== comedy film
+# 560
+Africa_Magic_Viewers'_Choice_Awards
+Mark_Angel_(comedian)
+SLK_(comedian)
+Alibaba_Akpobome
+Sophie_Alakija
+List_of_Nigerian_films_of_2021
+American_Driver
+Frank_D_Don
+4_Play_(film)
+Sugar_Rush_(film)
+== the wedding party
+# 100
+The_Wedding_Party_(2016_film)
+The_Wedding_Party_2
+List_of_highest-grossing_Nigerian_films
+Ikechukwu
+Sola_Sobowale
+Jumoke_George
+Inkblot_Productions
+Frank_Donga
+Kene_Okwuosa
+Banky_W.
+== omotola jalade
+# 79
+Omotola_Jalade_Ekeinde
+Alter_Ego_(2017_film)
+Shadow_Parties
+Lockdown_(2021_Nigerian_film)
+A_Private_Storm
+2017_Best_of_Nollywood_Awards
+Ijé
+Amina_(2012_film)
+Mortal_Inheritance
+The_Tribunal_(2017_film)
+== ramsey nouah
+# 141
+Ramsey_Nouah
+Tòkunbò
+Rattlesnake:_The_Ahanna_Story
+Genevieve_Nnaji
+The_Millions_(film)
+The_Accidental_Spy_(2017_film)
+Crazy_People_(2018_film)
+A_Private_Storm
+Gbomo_Gbomo_Express
+The_Grave_Dust
+== funke akindele
+# 170
+Funke_Akindele
+Jenifa_(character)
+A_Tribe_Called_Judah
+Battle_on_Buka_Street
+Omo_Ghetto
+Jenifa_(film_series)
+Everybody_Loves_Jenifa
+Aiyetoro_Town
+Jenifa's_Diary
+Omo_Ghetto:_The_Saga
+== television series
+# 600
+I_Need_to_Know_(TV_series)
+Postcards_(2024_TV_series)
+Jacob's_Cross
+Africa_(1984_TV_series)
+Idols_(West_African_TV_series)
+Iwájú
+Papa_Ajasco
+Oga!_Pastor
+The_Mystic_River
+The_Village_Headmaster
+== box office
+# 250
+Amstel_Malta_Box_Office
+Omo_Ghetto:_The_Saga
+Queen_Lateefah
+List_of_highest-grossing_Nigerian_films
+Battle_on_Buka_Street
+Fate_of_Alakada
+Muna_(2019_film)
+Muri_&_Ko
+Sahara_(2005_film)
+American_Driver
+== director
+# 836
+Charles_Uwagbai
+Ifeanyi_Onyeabor
+Aminu_Saira
+Fred_Amata
+Director_K
+Director_Pink
+Toka_McBaror
+Jeta_Amata
+Ufuoma_McDermott
+Adebayo_Tijani
+== nigerian music
+# 680
+Unlimited_L.A
+Lazarus_Ekwueme
+Director_K
+Fred_Onovwerosuoke
+Clarence_Peters
+Tope_Alabi
+Musical_Whispers
+Director_Pink
+Sesan_(video_director)
+The_Fuji_Documentary
+== pete edochie
+# 70
+Pete_Edochie
+Yul_Edochie
+Kingsley_Abasili
+Nani_Boi
+List_of_Nigerian_films_of_1999
+Foreigner's_God
+Mercy_Johnson
+Rita_Edochie
+List_of_Nigerian_films_of_2000
+Uche_Ogbodo
+== richard mofe-damijo
+# 123
+Richard_Mofe-Damijo
+The_Black_Book_(2023_film)
+Stella_Damasus
+Africa_Movie_Academy_Award_for_Best_Actor_in_a_Leading_Role
+Love_Is_War_(2019_film)
+Three_Wise_Men_(2016_film)
+Made_in_Heaven_(2019_film)
+The_Grudge_(2016_film)
+Ayo_Makun
+Castle_&_Castle
+== october 1
+# 1048
+October_1_(film)
+Kiki_Mordi
+Hijack_'93
+Queen_Blessing_Ebigieson
+Aisha_Lawal
+Rita_Nzelu
+Dark_October
+Steve_Gukas
+...When_Love_Happens
+Relentless_(2010_film)
+== king of boys
+# 200
+King_of_Boys:_The_Return_of_the_King
+King_of_Boys
+15th_Africa_Movie_Academy_Awards
+Titi_Kuti
+Sola_Sobowale
+Paul_Sambo
+Toni_Tones
+2020_Africa_Magic_Viewers'_Choice_Awards
+Meji_Alabi
+Hakeem_Effects
+== lionheart
+# 23
+Lionheart_(2018_film)
+Chinny_Onwugbenu
+Steve_Eboh
+Yakubu_Muhammed
+List_of_Nigerian_submissions_for_the_Academy_Award_for_Best_International_Feature_Film
+Genevieve_Nnaji
+Yinka_Edward
+Kulanen_Ikyo
+Ishaya_Bako
+Kanayo_O._Kanayo
+== film festival
+# 510
+List_of_festivals_in_Nigeria
+Africa_International_Film_Festival
+Eko_International_Film_Festival
+Eyimofe
+The_New_Patriots
+ION_International_Film_Festival
+Ololade_Ebong
+Joel_Kachi_Benson
+Lights,_Camera,_Africa!
+Derek_Ugochukwu
+== mercy johnson
+# 100
+Mercy_Johnson
+The_Legend_of_Inikpi
+Passport_(2022_film)
+The_New_Normal_(film)
+2014_Nollywood_Movies_Awards
+Thy_Will_Be_Done_(film)
+Keira_Hewatch
+The_Ghost_and_the_Tout_Too
+Seven_and_a_Half_Dates
+List_of_Nigerian_films_of_2020
+== the figurine
+# 45
+The_Figurine
+6th_Africa_Movie_Academy_Awards
+2010_Best_of_Nollywood_Awards
+Kemi_Adesoye
+Kunle_Afolayan
+Pat_Nebo
+Funlola_Aofiyebi-Raimi
+Ramsey_Nouah
+Omoni_Oboli
+Wikipedia:WikiProject_AfroCine/Offline_Nollywood
+== cinema of nigeria
+# 790
+Cinema_of_Nigeria
+New_Nigerian_Cinema
+Golden_Age_of_Nigerian_Cinema
+Filmmaking_in_Colonial_Nigeria
+Hausa-language_cinema
+Silverbird_Cinema_(Port_Harcourt)
+Kene_Okwuosa
+Silverbird_Group
+List_of_Nigerian_films_before_1970
+List_of_Nigerian_films_of_2020
+== born in 1980
+# 70
+Deza_the_Great
+Lucy_Ameh
+Abiodun_Koya
+General_Bugantra
+Aremu_Afolayan
+Chigozie_Atuanya
+Sola_Kosoko
+Prince_Hezekiah
+Oge_Okoye
+Beatrice_Funke_Ogunmola
+== amvca
+# 291
+2023_Africa_Magic_Viewers'_Choice_Awards
+AMVCA_Industry_Merit_Award
+Chinenye_Nworah
+Africa_Magic_Viewers'_Choice_Awards
+Anu_Afolayan
+AMVCA_for_Best_Overall_Movie
+Funny_Bone_(actor)
+Hakeem_Effects
+Frank_Donga
+Ola_Cardoso

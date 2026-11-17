@@ -1,7 +1,8 @@
+// Modified for the standalone zimru-xapian tools on 2026-11-17. See PROVENANCE.md.
 //! Xapian 1.4's `QueryParser` (`queryparser.lemony`), for the flags libzim
 //! uses: `FLAG_CJK_NGRAM` alone (full-text search; the suggestion phrases),
 //! and `FLAG_DEFAULT | FLAG_PARTIAL | FLAG_CJK_NGRAM` (suggestions), with the
-//! default operator AND and no stopper (libzim's indexes have no stopwords).
+//! default operator AND. Full-text queries use the index stopper.
 //!
 //! libzim lowercases every query first (`removeAccents`), so the parts of
 //! the grammar that need capitals (acronyms, `AND`/`OR`/`NOT`/`NEAR`…)
@@ -9,7 +10,9 @@
 // ponytail: no brackets, field prefixes or boolean keywords; port them from
 // the lemony grammar when a real (lowercase) query parses differently.
 
+use crate::Result;
 use crate::text::{Infix, Stemmer, infix, is_digit, is_unbroken, is_wordchar, lower, should_stem};
+use std::collections::HashSet;
 
 /// A parsed query (Xapian's `Query` tree, the operators libzim's queries produce).
 #[derive(Debug, Clone, PartialEq)]
@@ -48,8 +51,9 @@ pub struct Parser<'a> {
     pub stemmer: Option<&'a Stemmer>,
     pub stem: Stem,
     pub flags: Flags,
+    pub stopwords: Option<&'a HashSet<&'a str>>,
     /// Whether a term is in the database (for `c++`-style suffixes).
-    pub exists: &'a dyn Fn(&str) -> bool,
+    pub exists: &'a dyn Fn(&str) -> Result<bool>,
 }
 
 /// Xapian's default `set_max_partial_expansion`.
@@ -73,6 +77,40 @@ struct Term {
     stem: Stem,
     pos: u32,
     unbroken: bool,
+}
+
+// Xapian filters ordinary full-text words before stemming. If every word
+// in a whitespace-separated group is stopped, it keeps that group. Phrases
+// and CJK groups bypass the stopper.
+struct Word {
+    item: usize,
+    start: usize,
+    end: usize,
+    stopped: bool,
+}
+
+fn remove_stopwords(items: &mut Vec<Item>, words: &[Word], input: &[char]) {
+    if words.is_empty() || items.len() == 1 {
+        return;
+    }
+    let mut skip = vec![false; items.len()];
+    for group in words.chunk_by(|a, b| {
+        a.item + 1 == b.item
+            && a.end < b.start
+            && input[a.end..b.start].iter().all(|c| c.is_whitespace())
+    }) {
+        if group.len() == 1 || group.iter().any(|w| !w.stopped) {
+            for w in group {
+                skip[w.item] = w.stopped;
+            }
+        }
+    }
+    let mut index = 0;
+    items.retain(|_| {
+        let keep = !skip[index];
+        index += 1;
+        keep
+    });
 }
 
 enum Item {
@@ -138,14 +176,14 @@ impl Parser<'_> {
 
     /// `parse_term`: one word starting at `s[*i]` (a word character).
     /// Returns (term, needs word break).
-    fn parse_term(&self, s: &[char], i: &mut usize) -> (String, bool) {
+    fn parse_term(&self, s: &[char], i: &mut usize) -> Result<(String, bool)> {
         let n = s.len();
         if is_unbroken(s[*i]) {
             let start = *i;
             while *i < n && is_unbroken(s[*i]) && is_wordchar(s[*i]) {
                 *i += 1;
             }
-            return (s[start..*i].iter().collect(), true);
+            return Ok((s[start..*i].iter().collect(), true));
         }
         let mut term = String::new();
         let mut prev = s[*i];
@@ -185,22 +223,23 @@ impl Parser<'_> {
             }
             if !suff.is_empty() && (p == n || !is_wordchar(s[p])) {
                 let lc = |t: &str| t.chars().map(lower).collect::<String>();
-                if (self.exists)(&lc(&suff)) || !(self.exists)(&lc(&term)) {
+                if (self.exists)(&lc(&suff))? || !(self.exists)(&lc(&term))? {
                     term = suff;
                     *i = p;
                 }
             }
         }
-        (term, false)
+        Ok((term, false))
     }
 
     /// Parse `q`; `None` if it has no terms.
-    pub fn parse(&self, q: &str) -> Option<Query> {
+    pub fn parse(&self, q: &str) -> Result<Option<Query>> {
         let s: Vec<char> = q.chars().collect();
         let n = s.len();
         let mut i = 0;
         let mut pos = 1u32;
         let mut items: Vec<Item> = vec![];
+        let mut words = Vec::new();
         let mut newprev = ' ';
         let mut in_quotes: Option<Vec<Term>> = None;
         let mut hate_next = false;
@@ -280,10 +319,13 @@ impl Parser<'_> {
                 }
                 continue;
             }
+            let word_start = i;
+            let mut word_end;
             // A word (or the next word of a phrased term).
             loop {
                 newprev = 'A';
-                let (name, unbroken) = self.parse_term(&s, &mut i);
+                let (name, unbroken) = self.parse_term(&s, &mut i)?;
+                word_end = i;
                 let unstemmed = name.clone();
                 let name: String = name.chars().map(lower).collect();
                 let mut stem = self.stem;
@@ -338,6 +380,14 @@ impl Parser<'_> {
                 0 => {}
                 1 => {
                     let t = phrased.pop().unwrap();
+                    if let Some(stopper) = self.stopwords {
+                        words.push(Word {
+                            item: items.len(),
+                            start: word_start,
+                            end: word_end,
+                            stopped: stopper.contains(t.name.as_str()),
+                        });
+                    }
                     let q = self.term_query(&t);
                     push(&mut items, q, &mut hate_next);
                 }
@@ -353,6 +403,7 @@ impl Parser<'_> {
             let p = self.phrase(terms);
             push(&mut items, p, &mut hate_next);
         }
+        remove_stopwords(&mut items, &words, &s);
         let (mut plain, mut hate) = (vec![], vec![]);
         for it in items {
             match it {
@@ -361,14 +412,14 @@ impl Parser<'_> {
             }
         }
         if plain.is_empty() {
-            return None; // nothing, or only hated terms: a parse failure
+            return Ok(None); // nothing, or only hated terms: a parse failure
         }
         let q = and(plain);
-        Some(if hate.is_empty() {
+        Ok(Some(if hate.is_empty() {
             q
         } else {
             Query::AndNot(Box::new(q), Box::new(or(hate)))
-        })
+        }))
     }
 }
 
@@ -428,53 +479,60 @@ impl Query {
 pub fn suggestion(
     q: &str,
     stemmer: Option<&Stemmer>,
-    exists: &dyn Fn(&str) -> bool,
-) -> Option<Query> {
+    exists: &dyn Fn(&str) -> Result<bool>,
+) -> Result<Option<Query>> {
     if q.is_empty() {
-        return None;
+        return Ok(None);
     }
     let parser = |stem, syntax, partial| Parser {
         stemmer,
         stem,
         flags: Flags { syntax, partial },
+        stopwords: None,
         exists,
     };
-    let Some(main) = parser(Stem::Some, true, true).parse(q) else {
-        return Some(Query::Wildcard(q.to_string(), 0));
+    let Some(main) = parser(Stem::Some, true, true).parse(q)? else {
+        return Ok(Some(Query::Wildcard(q.to_string(), 0)));
     };
     let plain = parser(Stem::None, false, false);
-    let phrase = |s: &str| -> Option<Query> {
-        let p = plain.parse(s)?;
+    let phrase = |s: &str| -> Result<Option<Query>> {
+        let Some(p) = plain.parse(s)? else {
+            return Ok(None);
+        };
         let len = p.length();
         let mut terms: Vec<Query> = p
             .terms()
             .into_iter()
             .map(|(pos, t)| Query::Term(t, pos))
             .collect();
-        Some(if terms.len() == 1 {
+        Ok(Some(if terms.len() == 1 {
             terms.pop().unwrap()
         } else {
             Query::Phrase(terms, len)
-        })
+        }))
     };
     let mut v = vec![main];
-    v.extend(phrase(q));
+    v.extend(phrase(q)?);
     let first = Query::Or(v);
-    Some(match phrase(&format!("{}{q}", crate::index::ANCHOR)) {
-        Some(a) => Query::Or(vec![first, a]),
-        None => first,
-    })
+    Ok(Some(
+        match phrase(&format!("{}{q}", crate::index::ANCHOR))? {
+            Some(a) => Query::Or(vec![first, a]),
+            None => first,
+        },
+    ))
 }
 
 /// libzim's full-text query for (unaccented) `q`: STEM_ALL, AND.
 pub fn fulltext(
     q: &str,
     stemmer: Option<&Stemmer>,
-    exists: &dyn Fn(&str) -> bool,
-) -> Option<Query> {
+    exists: &dyn Fn(&str) -> Result<bool>,
+    stopwords: &HashSet<&str>,
+) -> Result<Option<Query>> {
     Parser {
         stemmer,
         stem: Stem::All,
+        stopwords: (!stopwords.is_empty()).then_some(stopwords),
         flags: Flags {
             syntax: false,
             partial: false,
@@ -497,8 +555,8 @@ mod tests {
     #[test]
     fn fulltext_queries() {
         let en = stemmer("eng");
-        let no = |_: &str| false;
-        let f = |q: &str| fulltext(q, en.as_ref(), &no);
+        let no = |_: &str| Ok(false);
+        let f = |q: &str| fulltext(q, en.as_ref(), &no, &HashSet::new()).unwrap();
         assert_eq!(
             f("climate changes"),
             Some(And(vec![t("climat", 1), t("chang", 2)]))
@@ -519,9 +577,23 @@ mod tests {
     }
 
     #[test]
+    fn stopwords_follow_native_group_and_phrase_rules() {
+        let stopwords = HashSet::from(["the", "a"]);
+        let parse = |q| fulltext(q, None, &|_| Ok(false), &stopwords).unwrap();
+        assert_eq!(parse("the corals a"), Some(t("corals", 2)));
+        assert_eq!(parse("the"), Some(t("the", 1)));
+        assert_eq!(parse("the a"), Some(And(vec![t("the", 1), t("a", 2)])));
+        assert_eq!(parse("the, a"), None);
+        assert_eq!(
+            parse("the/corals a"),
+            Some(Phrase(vec![t("the", 1), t("corals", 2)], 2))
+        );
+    }
+
+    #[test]
     fn suggestion_queries() {
         let en = stemmer("eng");
-        let no = |_: &str| false;
+        let no = |_: &str| Ok(false);
         let p = |q: &str| {
             Parser {
                 stemmer: en.as_ref(),
@@ -531,8 +603,10 @@ mod tests {
                     partial: true,
                 },
                 exists: &no,
+                stopwords: None,
             }
             .parse(q)
+            .unwrap()
         };
         assert_eq!(
             p("berlin wall"),
@@ -564,7 +638,7 @@ mod tests {
                 Or(vec![Wildcard("a".into(), 100), t("Za", 2)])
             ]))
         );
-        let s = suggestion("wo", en.as_ref(), &no).unwrap();
+        let s = suggestion("wo", en.as_ref(), &no).unwrap().unwrap();
         assert_eq!(
             s,
             Or(vec![
@@ -576,7 +650,7 @@ mod tests {
             ])
         );
         assert_eq!(
-            suggestion("&", en.as_ref(), &no),
+            suggestion("&", en.as_ref(), &no).unwrap(),
             Some(Wildcard("&".into(), 0))
         );
     }

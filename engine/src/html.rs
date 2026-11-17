@@ -1,3 +1,4 @@
+// Modified for the standalone zimru-xapian tools on 2026-11-17. See PROVENANCE.md.
 //! HTML to text, as libzim indexes it: a port of Xapian omega's `HtmlParser`
 //! and `MyHtmlParser` as patched by libzim (`src/xapian/htmlparse.{cc,h}`,
 //! `myhtmlparse.{cc,h}`, `namedentities.h`), called the way
@@ -10,7 +11,7 @@ pub(crate) struct Html {
     pub title: String,
     pub keywords: String,
     pub indexing_allowed: bool,
-    /// (latitude, longitude), parsed as C++ `float`s.
+    /// (latitude, longitude), finite degrees in the input range.
     pub geo: Option<(f64, f64)>,
 }
 
@@ -329,11 +330,8 @@ impl Parser {
                 }
             }
             b"geo.position" => {
-                if let Some(sep) = content.iter().position(|&c| c == b';') {
-                    self.geo = Some((
-                        stof(&content[..sep]) as f64,
-                        stof(&content[sep + 1..]) as f64,
-                    ));
+                if let Some((lat, lon)) = coordinates(&content) {
+                    self.geo = Some((lat, lon));
                 }
             }
             _ => {}
@@ -342,42 +340,17 @@ impl Parser {
     }
 }
 
-/// `std::istringstream(s) >> float` (libstdc++): skip whitespace, take the
-/// longest number-shaped prefix, 0 if that doesn't convert, ±max on overflow.
-fn stof(s: &[u8]) -> f32 {
-    let mut i = find(s, 0, |c| !is_space(c));
-    let st = i;
-    let digits = |i: &mut usize| {
-        let b = *i;
-        while *i < s.len() && s[*i].is_ascii_digit() {
-            *i += 1;
-        }
-        *i > b
-    };
-    if matches!(at(s, i), b'+' | b'-') {
-        i += 1;
+/// Match xapianbuilder's classic-locale, double-precision coordinate parser.
+fn coordinates(content: &[u8]) -> Option<(f64, f64)> {
+    fn coordinate(text: &str, limit: f64) -> Option<f64> {
+        let number: f64 = text
+            .trim_matches(|c: char| c.is_ascii_whitespace() || c == '\x0b')
+            .parse()
+            .ok()?;
+        (-limit..=limit).contains(&number).then_some(number)
     }
-    let mut mantissa = digits(&mut i);
-    if at(s, i) == b'.' {
-        i += 1;
-        mantissa |= digits(&mut i);
-    }
-    if mantissa && matches!(at(s, i), b'e' | b'E') {
-        i += 1;
-        if matches!(at(s, i), b'+' | b'-') {
-            i += 1;
-        }
-        digits(&mut i);
-    }
-    let v: f32 = std::str::from_utf8(&s[st..i])
-        .unwrap()
-        .parse()
-        .unwrap_or(0.0);
-    if v.is_infinite() {
-        f32::MAX.copysign(v)
-    } else {
-        v
-    }
+    let (lat, lon) = std::str::from_utf8(content).ok()?.split_once(';')?;
+    Some((coordinate(lat, 90.0)?, coordinate(lon, 180.0)?))
 }
 
 /// HtmlParser::decode_entities: named (case-sensitive, `;` optional),
@@ -569,15 +542,29 @@ mod tests {
             <meta name="geo.position" content="51.5;-0.12"><meta name=robots content="NoIndex">x"#,
         );
         assert_eq!(h.keywords, "a & b c");
-        assert_eq!(h.geo, Some((51.5f32 as f64, -0.12f32 as f64)));
+        assert_eq!(h.geo, Some((51.5, -0.12)));
         assert!(!h.indexing_allowed);
         assert_eq!(h.dump, ""); // parsing stops at the robots meta
         assert!(!parse(r#"<meta content="none" name="robots">"#).indexing_allowed);
         assert!(parse(r#"<meta name="robots" content="index">"#).indexing_allowed);
-        assert_eq!(
-            parse(r#"<meta name="geo.position" content="x;2">"#).geo,
-            Some((0.0, 2.0))
-        );
+        for value in [
+            "x;2",
+            "2;3 trailing",
+            "91;0",
+            "0;-181",
+            "NaN;2",
+            "0;inf",
+            ";",
+            "2;3;4",
+        ] {
+            assert_eq!(
+                parse(&format!(r#"<meta name="geo.position" content="{value}">"#)).geo,
+                None
+            );
+        }
+        let repeated = r#"<meta name="geo.position" content=" +8.5000012e1 ; -179.999991 ">
+                          <meta name="geo.position" content="x;2">"#;
+        assert_eq!(parse(repeated).geo, Some((85.000012, -179.999991)));
     }
 
     #[test]
@@ -608,6 +595,7 @@ mod tests {
     /// Every article's word count against the one libzim stored in value
     /// slot 1 of the climate archive's fulltext index.
     #[test]
+    #[ignore = "requires the two Kiwix fixtures from tests/real_archives.py"]
     fn word_counts_match_libzim() {
         let a = crate::testdata::climate();
         let db = crate::testdata::index(&a, true);
@@ -619,9 +607,10 @@ mod tests {
                 .parse()
                 .unwrap();
             let e = a
-                .entry_by_path(std::str::from_utf8(&path[2..]).unwrap())
+                .zim
+                .get_entry_by_path(std::str::from_utf8(&path[2..]).unwrap())
                 .unwrap();
-            let html = a.content(&e).unwrap();
+            let html = e.get_item(true).unwrap().bytes().unwrap();
             let got = count_words(&parse(&String::from_utf8_lossy(&html)).dump);
             if got != wc {
                 bad.push((String::from_utf8_lossy(&path).into_owned(), wc, got));

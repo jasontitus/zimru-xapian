@@ -1,3 +1,4 @@
+// Modified for the standalone zimru-xapian tools on 2026-11-17. See PROVENANCE.md.
 //! Xapian's integer and string encodings (`common/pack.h`). Decoders take a
 //! cursor (`&mut &[u8]`) and return `None` on bad or missing data.
 
@@ -6,7 +7,7 @@ pub fn uint(p: &mut &[u8]) -> Option<u64> {
     let mut v = 0u64;
     for (i, &b) in p.iter().enumerate() {
         let shift = 7 * i as u32;
-        if shift >= 64 {
+        if shift >= 64 || (shift == 63 && b > 1) {
             return None;
         }
         v |= u64::from(b & 0x7f).checked_shl(shift)?;

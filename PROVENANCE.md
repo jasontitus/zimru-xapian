@@ -1,0 +1,9 @@
+# Source provenance
+
+This standalone GPL-3.0-or-later project was created on 2026-11-17. Its origin is Gordon Brander's `gordonbrander/zim-mcp`, commit `3632a45929b907109eed592653a5dd35f43c1f75`. The `engine/` directory was extracted from `crates/zimfile-xapian/`. Its license is preserved in `engine/LICENSE`. The four reference query outputs in `tests/golden/` originated in `crates/zimfile/tests/golden/xapian/` at the same revision. [Original engine](https://github.com/gordonbrander/zim-mcp/tree/3632a45929b907109eed592653a5dd35f43c1f75/crates/zimfile-xapian) · [Original query fixtures](https://github.com/gordonbrander/zim-mcp/tree/3632a45929b907109eed592653a5dd35f43c1f75/crates/zimfile/tests/golden/xapian)
+
+Local changes on 2026-11-17 include standalone packaging, archive access and helper CLIs, Glass read validation and error propagation, stopword handling, writer input support, and a fixture adapter and conformance tests for zimru. The engine README credits the original implementation and documents its algorithms. The first Git commit preserves the verbatim import so local changes can be reviewed directly. Current capabilities and limits are described in the project README.
+
+The bundled default stopword lists come from `jasontitus/xapianbuilder` at `13ff368991850f35ecb2e60037c6385d9992cbdc` and retain their original Stopwords ISO MIT notices. The same builder revision serves as the reference for the JSONL protocol. [Source and notices](https://github.com/jasontitus/xapianbuilder/blob/13ff368991850f35ecb2e60037c6385d9992cbdc/UPSTREAM.md)
+
+The MIT-licensed `jasontitus/zimru` dependency is pinned at `061afbc2920c78fc4ecb7211cb9ef4f3655dba35`. The archive library and the native reference builder are maintained independently. Cargo.lock records the resolved Rust dependency versions. [zimru MIT license](https://github.com/jasontitus/zimru/blob/061afbc2920c78fc4ecb7211cb9ef4f3655dba35/LICENSE)

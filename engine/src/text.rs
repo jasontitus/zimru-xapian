@@ -1,3 +1,4 @@
+// Modified for the standalone zimru-xapian tools on 2026-11-17. See PROVENANCE.md.
 //! Text the way libzim and Xapian 1.4 see it: `removeAccents` (libzim's
 //! `tools.cpp`), Unicode character classes and the term generator's word
 //! splitting (`termgenerator_internal.cc`, `word-breaker.cc`), and the
@@ -235,24 +236,25 @@ pub type Stemmer = rust_stemmers::Stemmer;
 // 1.4's Snowball sources if those languages matter.
 pub fn stemmer(lang: &str) -> Option<Stemmer> {
     use rust_stemmers::Algorithm as R;
-    let a = match lang.trim().to_ascii_lowercase().as_str() {
-        "en" | "eng" => R::English,
-        "fr" | "fra" | "fre" => R::French,
-        "de" | "deu" | "ger" => R::German,
-        "es" | "spa" => R::Spanish,
-        "it" | "ita" => R::Italian,
-        "pt" | "por" => R::Portuguese,
-        "ru" | "rus" => R::Russian,
-        "nl" | "nld" | "dut" => R::Dutch,
-        "sv" | "swe" => R::Swedish,
-        "nb" | "nn" | "no" | "nob" | "nno" | "nor" => R::Norwegian,
-        "da" | "dan" => R::Danish,
-        "fi" | "fin" => R::Finnish,
-        "hu" | "hun" => R::Hungarian,
-        "ro" | "ron" | "rum" => R::Romanian,
-        "tr" | "tur" => R::Turkish,
-        "ar" | "ara" => R::Arabic,
-        "ta" | "tam" => R::Tamil,
+    let lang = lang.trim().split(['-', '_', '.', '@']).next().unwrap_or("");
+    let a = match lang.to_ascii_lowercase().as_str() {
+        "en" | "eng" | "english" => R::English,
+        "fr" | "fra" | "fre" | "french" => R::French,
+        "de" | "deu" | "ger" | "german" => R::German,
+        "es" | "spa" | "spanish" => R::Spanish,
+        "it" | "ita" | "italian" => R::Italian,
+        "pt" | "por" | "portuguese" => R::Portuguese,
+        "ru" | "rus" | "russian" => R::Russian,
+        "nl" | "nld" | "dut" | "dutch" => R::Dutch,
+        "sv" | "swe" | "swedish" => R::Swedish,
+        "nb" | "nn" | "no" | "nob" | "nno" | "nor" | "norwegian" => R::Norwegian,
+        "da" | "dan" | "danish" => R::Danish,
+        "fi" | "fin" | "finnish" => R::Finnish,
+        "hu" | "hun" | "hungarian" => R::Hungarian,
+        "ro" | "ron" | "rum" | "romanian" => R::Romanian,
+        "tr" | "tur" | "turkish" => R::Turkish,
+        "ar" | "ara" | "arabic" => R::Arabic,
+        "ta" | "tam" | "tamil" => R::Tamil,
         _ => return None,
     };
     Some(Stemmer::create(a))

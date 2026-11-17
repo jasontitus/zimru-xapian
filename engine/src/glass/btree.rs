@@ -1,3 +1,4 @@
+// Modified for the standalone zimru-xapian tools on 2026-11-17. See PROVENANCE.md.
 //! Reading Glass B-tree tables (`glass_table.h`, `glass_table.cc`).
 //!
 //! A block: `REV u32 | LEVEL u8 | MAX_FREE u16 | TOTAL_FREE u16 | DIR_END u16`,
@@ -33,7 +34,7 @@ impl Source for Vec<u8> {
     fn read_at(&self, buf: &mut [u8], off: u64) -> Result<()> {
         let s = usize::try_from(off)
             .ok()
-            .and_then(|o| self.get(o..o + buf.len()));
+            .and_then(|o| self.get(o..)?.get(..buf.len()));
         buf.copy_from_slice(s.ok_or_else(|| corrupt("read past the end"))?);
         Ok(())
     }
@@ -95,8 +96,11 @@ fn count(b: &[u8]) -> usize {
 }
 
 fn item_off(b: &[u8], i: usize) -> Result<usize> {
+    if i >= count(b) {
+        return Err(corrupt("item outside block directory"));
+    }
     let o = be16(b, DIR_START + 2 * i);
-    if o + 3 > b.len() {
+    if o < be16(b, 9) || o + 3 > b.len() {
         return Err(corrupt("item offset out of the block"));
     }
     Ok(o)
@@ -128,10 +132,20 @@ fn leaf(b: &[u8], i: usize) -> Result<Leaf<'_>> {
     })
 }
 
+/// Check traversal moves monotonically, including across component boundaries.
+fn check_step(from: &Leaf, to: &Leaf, dir: isize) -> Result<()> {
+    let old = (from.key, from.component);
+    let new = (to.key, to.component);
+    if (dir > 0 && old >= new) || (dir < 0 && old <= new) {
+        return Err(corrupt("leaf items out of order"));
+    }
+    Ok(())
+}
+
 /// A branch item: (child block, key, component).
 fn branch(b: &[u8], i: usize) -> Result<(u32, &[u8], usize)> {
     let o = item_off(b, i)?;
-    let k = b[o + 4] as usize;
+    let k = usize::from(*b.get(o + 4).ok_or_else(|| corrupt("short branch item"))?);
     if o + 7 + k > b.len() {
         return Err(corrupt("branch item out of the block"));
     }
@@ -232,10 +246,15 @@ impl<'a> Cursor<'a> {
         let (b, i) = &self.path[0];
         let ni = i + dir;
         if ni >= 0 && (ni as usize) < count(b) {
+            if *i >= 0 {
+                check_step(&leaf(b, *i as usize)?, &leaf(b, ni as usize)?, dir)?;
+            }
             self.path[0].1 = ni;
             return Ok(true);
         }
         // Up to the first level that can move, then down its edge.
+        let previous_block = Arc::clone(b);
+        let previous_index = *i;
         let mut lvl = 1;
         loop {
             let Some((b, i)) = self.path.get(lvl) else {
@@ -258,9 +277,20 @@ impl<'a> Cursor<'a> {
             if level(&cb) as usize != lvl - 1 {
                 return Err(corrupt(&format!("block {child} is at the wrong level")));
             }
+            if count(&cb) == 0 {
+                return Err(corrupt("empty child block"));
+            }
             let ci = if dir > 0 { 0 } else { count(&cb) as isize - 1 };
             lvl -= 1;
             self.path[lvl] = (cb, ci);
+        }
+        // Adjacent leaves must advance in key/component order. Reject a
+        // repeated or out-of-order child before a scan can revisit its data.
+        if previous_index >= 0 {
+            let previous = leaf(&previous_block, previous_index as usize)?;
+            let (block, i) = &self.path[0];
+            let current = leaf(block, *i as usize)?;
+            check_step(&previous, &current, dir)?;
         }
         Ok(true)
     }
@@ -301,11 +331,17 @@ impl<'a> Cursor<'a> {
                 blocks: self.blocks,
                 path: self.path.clone(),
             };
+            let key = it.key;
+            let mut component = it.component;
             loop {
                 if !c.step(1)? {
                     return Err(corrupt("tag's last component is missing"));
                 }
                 let it = leaf(&c.path[0].0, c.path[0].1 as usize)?;
+                component += 1;
+                if it.key != key || it.component != component || it.flags & FIRST != 0 {
+                    return Err(corrupt("inconsistent tag continuation"));
+                }
                 tag.extend_from_slice(it.tag);
                 if it.flags & LAST != 0 {
                     break;

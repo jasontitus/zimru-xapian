@@ -1,3 +1,4 @@
+// Modified for the standalone zimru-xapian tools on 2026-11-17. See PROVENANCE.md.
 //! libzim's Xapian search indexes in pure Rust (a reimplementation, not
 //! bindings): read, search and write the single-file Glass databases Kiwix
 //! archives embed (`X/fulltext/xapian`, `X/title/xapian`), with libzim's
@@ -13,6 +14,7 @@ mod html;
 mod index;
 mod matcher;
 mod query;
+mod stopwords;
 mod text;
 
 #[cfg(test)]
@@ -20,6 +22,7 @@ mod testdata;
 
 use glass::Db;
 use matcher::Match;
+use std::collections::HashSet;
 use std::io::{Seek, Write};
 use text::{Stemmer, parse_terms, remove_accents};
 
@@ -76,29 +79,38 @@ impl Index {
         Ok(Index { db: Db::open(src)? })
     }
 
-    /// The stemmer: the index's `language` metadata, else `lang` (old indexes
-    /// have none; libzim then uses the archive's `M/Language`).
-    fn stemmer(&self, lang: &str) -> Option<Stemmer> {
-        let meta = self
-            .db
-            .metadata("language")
-            .ok()
-            .flatten()
-            .unwrap_or_default();
-        let meta = String::from_utf8_lossy(&meta);
-        let lang = if meta.is_empty() { lang } else { &meta };
-        text::stemmer(lang.split(',').next().unwrap_or(""))
+    /// Read an index metadata value, preserving the distinction between missing data and read errors.
+    pub fn metadata(&self, key: &str) -> Result<Option<Vec<u8>>> {
+        self.db.metadata(key)
     }
 
-    fn exists(&self) -> impl Fn(&str) -> bool + '_ {
-        |t| self.db.freqs(t.as_bytes()).is_ok_and(|f| f.0 > 0)
+    /// The stemmer: the index's `language` metadata, else `lang` (old indexes
+    /// have none; libzim then uses the archive's `M/Language`).
+    fn stemmer(&self, lang: &str) -> Result<Option<Stemmer>> {
+        let meta = self.db.metadata("language")?.unwrap_or_default();
+        let meta = String::from_utf8_lossy(&meta);
+        let lang = if meta.is_empty() { lang } else { &meta };
+        Ok(text::stemmer(lang.split(',').next().unwrap_or("")))
+    }
+
+    fn exists(&self, term: &str) -> Result<bool> {
+        Ok(self.db.freqs(term.as_bytes())?.0 > 0)
     }
 
     /// Full-text search: the best `limit` documents for `q`, as libzim ranks them.
     pub fn search(&self, q: &str, limit: usize, lang: &str) -> Result<Vec<Hit>> {
         let db = &self.db;
-        let stem = self.stemmer(lang);
-        let Some(query) = query::fulltext(&remove_accents(q), stem.as_ref(), &self.exists()) else {
+        let stem = self.stemmer(lang)?;
+        let metadata = db.metadata("stopwords")?.unwrap_or_default();
+        let list = String::from_utf8_lossy(&metadata);
+        let words = stopwords::parse(&list);
+        let Some(query) = query::fulltext(
+            &remove_accents(q),
+            stem.as_ref(),
+            &|term| self.exists(term),
+            &words,
+        )?
+        else {
             return Ok(vec![]);
         };
         let (mut ms, total) = matcher::matches(db, &query, matcher::FULLTEXT)?;
@@ -134,8 +146,9 @@ impl Index {
     /// Title suggestions, as libzim makes them: document paths.
     pub fn suggest(&self, q: &str, limit: usize, lang: &str) -> Result<Vec<String>> {
         let db = &self.db;
-        let stem = self.stemmer(lang);
-        let Some(query) = query::suggestion(&remove_accents(q), stem.as_ref(), &self.exists())
+        let stem = self.stemmer(lang)?;
+        let Some(query) =
+            query::suggestion(&remove_accents(q), stem.as_ref(), &|term| self.exists(term))?
         else {
             return Ok(vec![]);
         };
@@ -181,6 +194,7 @@ pub struct IndexWriter {
     fulltext: bool,
     language: String,
     stemmer: Option<Stemmer>,
+    stopwords: HashSet<&'static str>,
     builder: glass::write::Builder,
 }
 
@@ -190,6 +204,7 @@ impl IndexWriter {
             fulltext,
             language: language.into(),
             stemmer: text::stemmer(language),
+            stopwords: stopwords::parse(stopwords::bundled(language)),
             builder: Default::default(),
         }
     }
@@ -204,21 +219,49 @@ impl IndexWriter {
         IndexWriter::new(false, language)
     }
 
+    /// Set the language used to stem subsequent documents. The database
+    /// metadata continues to describe the default query language.
+    pub fn set_stemming_language(&mut self, language: &str) {
+        self.stemmer = text::stemmer(language);
+    }
+
+    /// Index literal non-HTML content, as accepted by the xapianbuilder CLI.
+    pub fn add_text(&mut self, path: &str, title: &str, body: &str) {
+        if body.is_empty() {
+            return;
+        }
+        let title = remove_accents(title);
+        let terms = index::fulltext_terms(body, &title, "", self.stemmer.as_ref(), &self.stopwords);
+        let values = [
+            (0, title.into_bytes()),
+            (1, body.split_whitespace().count().to_string().into_bytes()),
+        ];
+        self.builder
+            .add(format!("C/{path}").as_bytes(), &terms, &values);
+    }
+
     /// Add an HTML item at `C/<path>` (skipped if it has no text or asks not
     /// to be indexed, as in libzim).
     pub fn add_html(&mut self, path: &str, title: &str, html: &str) {
-        index::add_fulltext(&mut self.builder, path, title, html, self.stemmer.as_ref());
+        index::add_fulltext(
+            &mut self.builder,
+            path,
+            title,
+            html,
+            self.stemmer.as_ref(),
+            &self.stopwords,
+        );
     }
 
     /// Add a front article, or a redirect to `target`, at `C/<path>`.
-    pub fn add_title(&mut self, path: &str, title: &str, target: Option<&str>) {
+    pub fn add_title(&mut self, path: &str, title: &str, target: Option<&str>) -> Result<()> {
         index::add_title(
             &mut self.builder,
             path,
             title,
             target,
             self.stemmer.as_ref(),
-        );
+        )
     }
 
     pub fn is_empty(&self) -> bool {

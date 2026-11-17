@@ -1,3 +1,4 @@
+// Modified for the standalone zimru-xapian tools on 2026-11-17. See PROVENANCE.md.
 //! A single-file Glass database: the version block and the tables libzim's
 //! indexes use (postlist, docdata, position). See `plans/glass-indexes.md`.
 
@@ -106,6 +107,10 @@ fn u32_of(v: u64) -> Result<u32> {
     u32::try_from(v).map_err(|_| bad())
 }
 
+fn add_delta(base: u32, delta: u64) -> Result<u32> {
+    base.checked_add(u32_of(delta)?).ok_or_else(bad)
+}
+
 impl Db {
     pub fn open(src: Box<dyn Source>) -> Result<Db> {
         let mut head = vec![0; 256];
@@ -126,7 +131,9 @@ impl Db {
                 sequential: val & 2 != 0,
                 fake: val & 1 != 0,
                 entries: pack::uint(&mut p).ok_or_else(bad)?,
-                blocksize: u32_of(pack::uint(&mut p).ok_or_else(bad)? << 11)?,
+                blocksize: u32_of(pack::uint(&mut p).ok_or_else(bad)?)?
+                    .checked_mul(2048)
+                    .ok_or_else(bad)?,
                 compress_min: u32_of(pack::uint(&mut p).ok_or_else(bad)?)?,
                 freelist: pack::string(&mut p).ok_or_else(bad)?.to_vec(),
             };
@@ -137,10 +144,10 @@ impl Db {
         }
         let stats = Stats {
             doccount: u32_of(s[0])?,
-            last_docid: u32_of(s[1] + s[0])?,
+            last_docid: add_delta(u32_of(s[0])?, s[1])?,
             doclen_lbound: u32_of(s[2])?,
             wdf_ubound: u32_of(s[3])?,
-            doclen_ubound: u32_of(s[4] + s[3])?,
+            doclen_ubound: add_delta(u32_of(s[3])?, s[4])?,
             total_doclen: s[6],
         };
         let size = roots[POSTLIST].blocksize as usize;
@@ -229,15 +236,15 @@ impl Db {
         let Some(mut p) = k.strip_prefix(&value_key(slot, None)[..]) else {
             return Ok(None); // no chunk for this slot at or before did
         };
-        let mut d = pack::pus(&mut p).ok_or_else(bad)?;
+        let mut d = u32_of(pack::pus(&mut p).ok_or_else(bad)?)?;
         let tag = c.tag()?;
         let mut p = &tag[..];
         let mut v = pack::string(&mut p).ok_or_else(bad)?;
-        while d < u64::from(did) && !p.is_empty() {
-            d += pack::uint(&mut p).ok_or_else(bad)? + 1;
+        while d < did && !p.is_empty() {
+            d = add_delta(d + 1, pack::uint(&mut p).ok_or_else(bad)?)?;
             v = pack::string(&mut p).ok_or_else(bad)?;
         }
-        Ok((d == u64::from(did)).then(|| v.to_vec()))
+        Ok((d == did).then(|| v.to_vec()))
     }
 
     /// (frequency, lower bound, upper bound) of a value slot.
@@ -333,7 +340,7 @@ impl<'a> PostList<'a> {
         let mut p = &tag[..];
         pl.tf = u32_of(pack::uint(&mut p).ok_or_else(bad)?)?;
         pl.cf = pack::uint(&mut p).ok_or_else(bad)?;
-        let first = u32_of(pack::uint(&mut p).ok_or_else(bad)? + 1)?;
+        let first = add_delta(1, pack::uint(&mut p).ok_or_else(bad)?)?;
         let used = tag.len() - p.len();
         pl.load(tag, used, first)?;
         Ok(Some(pl))
@@ -344,7 +351,10 @@ impl<'a> PostList<'a> {
     fn load(&mut self, tag: Vec<u8>, at: usize, first: u32) -> Result<()> {
         let mut p = &tag[at..];
         self.is_last_chunk = pack::bool(&mut p).ok_or_else(bad)?;
-        self.last_in_chunk = u32_of(u64::from(first) + pack::uint(&mut p).ok_or_else(bad)?)?;
+        self.last_in_chunk = add_delta(first, pack::uint(&mut p).ok_or_else(bad)?)?;
+        if first == 0 || self.last_in_chunk > self.db.stats.last_docid {
+            return Err(corrupt("posting outside database document range"));
+        }
         self.did = first;
         self.wdf = u32_of(pack::uint(&mut p).ok_or_else(bad)?)?;
         self.pos = tag.len() - p.len();
@@ -394,20 +404,28 @@ impl<'a> PostList<'a> {
         }
         if self.pos < self.chunk.len() {
             let mut p = &self.chunk[self.pos..];
-            self.did = u32_of(u64::from(self.did) + pack::uint(&mut p).ok_or_else(bad)? + 1)?;
+            let next = self.did.checked_add(1).ok_or_else(bad)?;
+            self.did = add_delta(next, pack::uint(&mut p).ok_or_else(bad)?)?;
+            if self.did > self.last_in_chunk {
+                return Err(corrupt("posting outside chunk document range"));
+            }
             self.wdf = u32_of(pack::uint(&mut p).ok_or_else(bad)?)?;
             self.pos = self.chunk.len() - p.len();
             return Ok(true);
+        }
+        if self.did != self.last_in_chunk {
+            return Err(corrupt("posting chunk ended before its last document"));
         }
         if self.is_last_chunk {
             self.ended = true;
             return Ok(false);
         }
-        let key = postlist_key(&self.term, Some(self.last_in_chunk + 1));
+        let next_min = self.last_in_chunk.checked_add(1).ok_or_else(bad)?;
+        let key = postlist_key(&self.term, Some(next_min));
         let blocks = &self.db.blocks;
         let c = Cursor::seek_ge(blocks, &self.db.roots[POSTLIST], &key)?;
         match c {
-            Some(c) if self.load_at(&c)? => Ok(true),
+            Some(c) if self.load_at(&c)? && self.did >= next_min => Ok(true),
             _ => Err(corrupt("posting list chunk missing")),
         }
     }

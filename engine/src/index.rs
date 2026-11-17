@@ -1,3 +1,4 @@
+// Modified for the standalone zimru-xapian tools on 2026-11-17. See PROVENANCE.md.
 //! The documents libzim puts in its two indexes (`xapianIndexer.cpp`,
 //! `xapianWorker.cpp`): terms, wdfs and positions as Xapian 1.4's term
 //! generator makes them.
@@ -5,6 +6,7 @@
 use crate::glass::write::{Builder, Terms};
 use crate::html;
 use crate::text::{Stemmer, parse_terms, remove_accents, should_stem};
+use std::collections::HashSet;
 
 /// libzim's `ANCHOR_TERM`: every title starts with it, so a phrase can be
 /// anchored to the start.
@@ -25,11 +27,11 @@ fn add(terms: &mut Terms, term: &str, wdf: u32, pos: Option<u32>) {
 /// A title document's terms: `"0posanchor " + removeAccents(title)` with
 /// positions, STEM_SOME (the word at its position, `Z` + stem without),
 /// CJK n-grams. A title of no words is indexed as one whole term instead.
-pub fn title_terms(title: &str, stem: Option<&Stemmer>) -> Terms {
+pub fn title_terms(title: &str, stem: Option<&Stemmer>) -> crate::Result<Terms> {
     let mut terms = Terms::new();
     let unaccented = remove_accents(title);
     if unaccented.is_empty() {
-        return terms;
+        return Ok(terms);
     }
     let mut pos = 0;
     parse_terms(
@@ -57,20 +59,40 @@ pub fn title_terms(title: &str, stem: Option<&Stemmer>) -> Terms {
             true
         },
     );
+    // Match xapianbuilder's guard for titles losing too much text to token limits.
+    let total_len = ANCHOR.len() + unaccented.len();
+    if total_len >= MAX_TITLE_WORD {
+        let indexed_len: u64 = terms
+            .iter()
+            .filter(|(term, _)| !term.starts_with(b"Z"))
+            .map(|(term, (wdf, _))| term.len() as u64 * u64::from(*wdf))
+            .sum();
+        if (total_len as u64).saturating_sub(indexed_len) >= MAX_TITLE_WORD as u64 {
+            return Err(crate::Error::Invalid(
+                "title indexing lost too much text".into(),
+            ));
+        }
+    }
     if terms.len() == 1 {
         terms.clear();
         if unaccented.len() <= MAX_TITLE_WORD {
             add(&mut terms, &unaccented, 1, None);
         }
     }
-    terms
+    Ok(terms)
 }
 
 /// Index `text` without positions, STEM_ALL (stems only) with a stemmer,
 /// else the words themselves; each occurrence adds `wdf`.
-fn index_text(terms: &mut Terms, text: &str, wdf: u32, stem: Option<&Stemmer>) {
+fn index_text(
+    terms: &mut Terms,
+    text: &str,
+    wdf: u32,
+    stem: Option<&Stemmer>,
+    stopwords: &HashSet<&str>,
+) {
     parse_terms(text, true, false, |t, _| {
-        if t.len() > MAX_WORD {
+        if t.len() > MAX_WORD || stopwords.contains(t) {
             return true;
         }
         match stem {
@@ -88,25 +110,50 @@ fn index_text(terms: &mut Terms, text: &str, wdf: u32, stem: Option<&Stemmer>) {
 
 /// A full-text document's terms: the unaccented content (wdf 1 each), title
 /// (`content bytes / 500 + 1` each) and keywords (3 each).
-pub fn fulltext_terms(content: &str, title: &str, keywords: &str, stem: Option<&Stemmer>) -> Terms {
+pub fn fulltext_terms(
+    content: &str,
+    title: &str,
+    keywords: &str,
+    stem: Option<&Stemmer>,
+    stopwords: &HashSet<&str>,
+) -> Terms {
     let mut terms = Terms::new();
-    index_text(&mut terms, content, 1, stem);
-    index_text(&mut terms, title, content.len() as u32 / 500 + 1, stem);
-    index_text(&mut terms, keywords, 3, stem);
+    index_text(&mut terms, content, 1, stem, stopwords);
+    index_text(
+        &mut terms,
+        title,
+        content.len() as u32 / 500 + 1,
+        stem,
+        stopwords,
+    );
+    index_text(&mut terms, keywords, 3, stem, stopwords);
     terms
 }
 
 /// Add an HTML item to the full-text index, as libzim does (skipped if it
 /// has no text, a robots `noindex`, or `NOINDEX` in its text). Values:
 /// 0 = the unaccented title, 1 = the word count, 2 = the geo position.
-pub fn add_fulltext(b: &mut Builder, path: &str, title: &str, html: &str, stem: Option<&Stemmer>) {
+pub fn add_fulltext(
+    b: &mut Builder,
+    path: &str,
+    title: &str,
+    html: &str,
+    stem: Option<&Stemmer>,
+    stopwords: &HashSet<&str>,
+) {
     let h = html::parse(html);
     if h.dump.is_empty() || !h.indexing_allowed || h.dump.contains("NOINDEX") {
         return;
     }
     let content = remove_accents(&h.dump);
     let title = remove_accents(title);
-    let terms = fulltext_terms(&content, &title, &remove_accents(&h.keywords), stem);
+    let terms = fulltext_terms(
+        &content,
+        &title,
+        &remove_accents(&h.keywords),
+        stem,
+        stopwords,
+    );
     let mut values = vec![
         (0, title.into_bytes()),
         (1, count_words(&h.dump).to_string().into_bytes()),
@@ -125,16 +172,17 @@ pub fn add_title(
     title: &str,
     target: Option<&str>,
     stem: Option<&Stemmer>,
-) {
+) -> crate::Result<()> {
     let values = [
         (0, title.as_bytes().to_vec()),
         (1, target.unwrap_or(path).as_bytes().to_vec()),
     ];
     b.add(
         format!("C/{path}").as_bytes(),
-        &title_terms(title, stem),
+        &title_terms(title, stem)?,
         &values,
     );
+    Ok(())
 }
 
 /// libzim's index metadata.
@@ -145,6 +193,10 @@ pub fn set_metadata(b: &mut Builder, fulltext: bool, language: &str) {
     } else {
         b.set_metadata("valuesmap", b"title:0;targetPath:1");
         b.set_metadata("kind", b"title");
+    }
+    let list = crate::stopwords::bundled(language);
+    if !list.is_empty() {
+        b.set_metadata("stopwords", list.as_bytes());
     }
     b.set_metadata("data", b"fullPath");
     b.set_metadata("language", language.as_bytes());
@@ -218,6 +270,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "requires the two Kiwix fixtures from tests/real_archives.py"]
     fn titles_match_libzim() {
         for a in archives() {
             titles_match(&a);
@@ -231,7 +284,7 @@ mod tests {
         let mut bad = vec![];
         for (did, (path, want)) in real.iter().enumerate() {
             let title = db.value(did as u32 + 1, 0).unwrap().unwrap();
-            let got = title_terms(std::str::from_utf8(&title).unwrap(), st.as_ref());
+            let got = title_terms(std::str::from_utf8(&title).unwrap(), st.as_ref()).unwrap();
             if &got != want {
                 if bad.is_empty() {
                     let show = |t: &Terms| {
@@ -256,6 +309,7 @@ mod tests {
     /// Every full-text document regenerates libzim's terms and wdfs, from
     /// the article HTML and title.
     #[test]
+    #[ignore = "requires the two Kiwix fixtures from tests/real_archives.py"]
     fn fulltext_matches_libzim() {
         for a in archives() {
             let db = index(&a, true);
@@ -272,14 +326,15 @@ mod tests {
             let mut bad = vec![];
             for did in 1..=db.stats.doccount {
                 let path = String::from_utf8(db.data(did).unwrap().unwrap()).unwrap();
-                let e = a.entry_by_path(&path[2..]).unwrap();
-                let html = a.content(&e).unwrap();
+                let e = a.zim.get_entry_by_path(&path[2..]).unwrap();
+                let html = e.get_item(true).unwrap().bytes().unwrap();
                 let h = crate::html::parse(&String::from_utf8_lossy(&html));
                 let got = fulltext_terms(
                     &remove_accents(&h.dump),
-                    &remove_accents(&e.title),
+                    &remove_accents(e.title()),
                     &remove_accents(&h.keywords),
                     st.as_ref(),
+                    &HashSet::new(),
                 );
                 let got: BTreeMap<Vec<u8>, u32> = got.into_iter().map(|(k, v)| (k, v.0)).collect();
                 let want = real.remove(&did).unwrap_or_default();

@@ -50,12 +50,10 @@ Shortcuts, each harmless to libzim readers:
 | Only the postlist, docdata and position tables; termlist, spelling and synonym are empty, as in Kiwix's own indexes | No spelling correction, synonyms or term lists | A termlist writer (~80 lines) |
 | Tags are never compressed on write (compressed ones are read) | Indexes a few percent bigger | Deflate docdata tags |
 | Simple B-tree layout: unshortened branch keys, no freelist, not `sequential` | Slightly bigger branch levels | Shorten separators |
-| No stopwords, ever (libzim finds none for `eng`, so its archives have none) | Common words are indexed and must match | Ship libzim's stopword lists |
 | Query parser: what libzim's lowercase queries reach (no brackets, field prefixes, `AND`/`OR`/`NEAR`) | Unusual suggestion syntax may parse differently | Port more of the grammar |
 | Every match is scored exactly: no max-weight pruning | A very common word on a huge archive is slow | Xapian's weight bounds |
 | Snippets: a plain-text window around the first query word | Not Kiwix's snippets | Port `MSet::snippet` |
 | No geo search (geo values are written), no multi-archive search, no pre-Glass (Chert) indexes | — | — |
-| Title words over 240 bytes are dropped; libzim aborts the archive instead (`TitleIndexingError`) | — | — |
 | The writer holds the full-text index in memory until `finish` | RAM ≈ the index size (1–2 GB for all of English Wikipedia) | Spill sorted runs to disk |
 | Stemmers: `rust-stemmers` (Snowball 2017, identical to Xapian 1.4's English on 237,897 words), which lacks Armenian, Basque, Catalan, Indonesian, Irish, Lithuanian and Nepali | Archives in those 7 languages aren't stemmed, so search matches Kiwix's indexes poorly and Kiwix matches zimfile-written ones poorly | Generate Rust stemmers from Xapian 1.4's Snowball sources |
 
@@ -64,3 +62,5 @@ left articles whose title equals their path out of the title index; current
 libzim, and zimfile, index them.
 
 License: GPL-3.0-or-later.
+
+The standalone fork reads full-text stopwords from database metadata. Its writer selects the Stopwords ISO list by exact language code, matching xapianbuilder defaults. For example, `en` selects the English list and `eng` selects an empty list. See [stopword provenance and notices](LICENSES/README.md).
