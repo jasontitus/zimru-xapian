@@ -1,0 +1,22 @@
+[package]
+name = "zimfile-xapian"
+version = "0.1.0"
+edition = "2024"
+license = "GPL-3.0-or-later"
+description = "libzim's Xapian search indexes (read, write, search) in pure Rust: a reimplementation, not bindings"
+repository = "https://github.com/gordonbrander/zim-mcp"
+readme = "README.md"
+keywords = ["zim", "kiwix", "xapian", "search", "offline"]
+categories = ["parser-implementations", "text-processing"]
+include = ["/src/**", "/README.md", "/LICENSE"]
+
+[dependencies]
+flate2 = "1.1.11"
+icu_normalizer = "2.4.0"
+icu_properties = "2.4.0"
+rust-stemmers = "1.2.0"
+
+[dev-dependencies]
+# Tests read the real Kiwix archives' indexes and articles through zimfile
+# (bytes only: zimfile itself depends on this crate).
+zimfile = { path = "../zimfile" }
