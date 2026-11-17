@@ -133,6 +133,53 @@ impl PartialEq for Rank {
 }
 impl Eq for Rank {}
 
+/// The names used by libzim's `valuesmap` metadata. Other names are
+/// permitted. Only the three slots consumed by this reader need storage.
+#[derive(Default)]
+struct ValueSlots {
+    title: Option<u32>,
+    target: Option<u32>,
+    word_count: Option<u32>,
+}
+
+impl ValueSlots {
+    fn read(db: &Db) -> Result<Self> {
+        let raw = db.metadata("valuesmap")?.unwrap_or_default();
+        let metadata = std::str::from_utf8(&raw)
+            .map_err(|_| Error::Format("invalid UTF-8 in valuesmap".into()))?;
+        let mut slots = Self::default();
+        let mut fields = metadata.split(';').filter(|s| !s.is_empty()).peekable();
+        if fields.peek().is_none() {
+            // libzim's fallback for indexes predating named value slots.
+            slots.word_count = Some(3);
+        }
+        for field in fields {
+            let (name, value) = field
+                .split_once(':')
+                .ok_or_else(|| Error::Format("missing slot number in valuesmap".into()))?;
+            let slot = value
+                .trim_ascii()
+                .parse::<u32>()
+                .map_err(|_| Error::Format("invalid slot number in valuesmap".into()))?;
+            // libzim keeps the first entry for a repeated name.
+            match name {
+                "title" => slots.title.get_or_insert(slot),
+                "targetPath" => slots.target.get_or_insert(slot),
+                "wordcount" => slots.word_count.get_or_insert(slot),
+                _ => continue,
+            };
+        }
+        Ok(slots)
+    }
+}
+
+fn slot_value(db: &Db, did: u32, slot: Option<u32>) -> Result<Option<Vec<u8>>> {
+    match slot {
+        Some(slot) => db.value(did, slot),
+        None => Ok(None),
+    }
+}
+
 /// One embedded index, opened.
 pub struct Index {
     db: Db,
@@ -229,10 +276,10 @@ impl Index {
         let Some(best) = best else {
             return Ok(vec![]);
         };
+        let slots = ValueSlots::read(db)?;
         let mut hits = Vec::with_capacity(top.len());
         for rank in top {
-            let word_count = db
-                .value(rank.did, 1)?
+            let word_count = slot_value(db, rank.did, slots.word_count)?
                 .and_then(|v| String::from_utf8(v).ok()?.parse().ok());
             hits.push(Hit {
                 path: self.document_path(rank.did)?,
@@ -256,6 +303,7 @@ impl Index {
         else {
             return Ok(vec![]);
         };
+        let slots = ValueSlots::read(db)?;
         // Retain the best representative of each target among the top K.
         // An evicted target may re-enter later through a better-scoring alias.
         let mut top = BTreeMap::<Rank, Vec<u8>>::new();
@@ -267,13 +315,13 @@ impl Index {
             }
             let rank = Rank {
                 weight: m.weight,
-                title: db.value(m.did, 0)?.unwrap_or_default(),
+                title: slot_value(db, m.did, slots.title)?.unwrap_or_default(),
                 did: m.did,
             };
             if top.len() == limit && worst.is_some_and(|w| rank >= *w) {
                 return Ok(());
             }
-            let target = db.value(m.did, 1)?.unwrap_or_default();
+            let target = slot_value(db, m.did, slots.target)?.unwrap_or_default();
             if retained_targets.get(&target).is_some_and(|r| rank >= *r) {
                 return Ok(());
             }
@@ -301,6 +349,65 @@ mod path_tests {
     use super::*;
     use crate::glass::write::{Builder, Terms};
     use std::io::Cursor;
+
+    #[test]
+    fn named_and_legacy_value_slots_follow_libzim() {
+        let index = |map: Option<&[u8]>| {
+            let mut db = Builder::default();
+            if let Some(map) = map {
+                db.set_metadata("valuesmap", map);
+            }
+            let terms = Terms::from([(b"prairie".to_vec(), (1, vec![]))]);
+            for (path, title, target) in [
+                ("C/first", "Zulu", "shared"),
+                ("C/second", "Alpha", "shared"),
+                ("C/third", "Bravo", "other"),
+            ] {
+                db.add(
+                    path.as_bytes(),
+                    &terms,
+                    &[
+                        (1, b"1".to_vec()),
+                        (3, b"30".to_vec()),
+                        (5, title.as_bytes().to_vec()),
+                        (6, target.as_bytes().to_vec()),
+                        (7, b"70".to_vec()),
+                    ],
+                )
+                .unwrap();
+            }
+            let mut file = Cursor::new(Vec::new());
+            db.write(&mut file, [0; 16]).unwrap();
+            Index::open(Box::new(file.into_inner())).unwrap()
+        };
+        let named = index(Some(b"wordcount: 7 ;title:5;targetPath:6;wordcount:1"));
+        assert_eq!(
+            named.search("prairie", 1, "").unwrap()[0].word_count,
+            Some(70)
+        );
+        assert_eq!(
+            named.suggest("prairie", 3, "").unwrap(),
+            ["C/second", "C/third"]
+        );
+        let missing = index(Some(b"title:5"));
+        assert_eq!(
+            missing.search("prairie", 1, "").unwrap()[0].word_count,
+            None
+        );
+        assert_eq!(
+            missing.suggest("prairie", 3, "").unwrap(),
+            ["C/second", "C/third", "C/first"]
+        );
+        let legacy = index(None);
+        assert_eq!(
+            legacy.search("prairie", 1, "").unwrap()[0].word_count,
+            Some(30)
+        );
+        assert_eq!(
+            legacy.suggest("prairie", 3, "").unwrap(),
+            ["C/first", "C/second", "C/third"]
+        );
+    }
 
     #[test]
     fn selected_documents_require_a_utf8_path() {

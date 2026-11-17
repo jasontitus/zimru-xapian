@@ -199,9 +199,10 @@ pub fn add_title(
     target: Option<&str>,
     stem: Option<&Stemmer>,
 ) -> crate::Result<()> {
+    let target_path = target.filter(|p| !p.is_empty()).unwrap_or(path);
     let values = [
         (0, title.as_bytes().to_vec()),
-        (1, target.unwrap_or(path).as_bytes().to_vec()),
+        (1, target_path.as_bytes().to_vec()),
     ];
     b.add(
         format!("C/{path}").as_bytes(),
@@ -278,6 +279,20 @@ mod tests {
     use crate::testdata::{Archive, archives, index};
     use crate::text::stemmer;
     use std::collections::BTreeMap;
+
+    #[test]
+    fn empty_target_collapses_an_article_with_its_redirect() {
+        let mut writer = crate::IndexWriter::title("eng");
+        writer.add_title("Earth", "Earth", Some("")).unwrap();
+        writer
+            .add_title("Earth-alias", "Earth", Some("Earth"))
+            .unwrap();
+        let mut out = std::io::Cursor::new(Vec::new());
+        writer.write(&mut out, [0; 16]).unwrap();
+
+        let index = crate::Index::open(Box::new(out.into_inner())).unwrap();
+        assert_eq!(index.suggest("Earth", 10, "").unwrap(), ["C/Earth"]);
+    }
 
     /// The climate archive's title index, inverted: (path, terms) by docid − 1.
     fn real_title_docs(a: &Archive) -> Vec<(String, Terms)> {

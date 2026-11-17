@@ -168,6 +168,11 @@ pub fn decode(data: &[u8], max_positions: usize) -> Result<Vec<u32>> {
     positions[count - 1] = last;
     r.interpolative(&mut positions, 0, count - 1)
         .ok_or_else(bad_positions)?;
+    // Xapian BitReader::check_all_gone permits only zero padding in the
+    // final partial byte of a position list.
+    if r.idx != r.buf.len() || r.n > 7 || r.acc != 0 {
+        return Err(bad_positions());
+    }
     Ok(positions)
 }
 

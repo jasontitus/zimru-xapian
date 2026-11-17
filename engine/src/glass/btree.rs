@@ -47,16 +47,18 @@ pub struct Blocks {
     src: Box<dyn Source>,
     pub size: usize,
     pub limits: ReaderLimits,
+    revision: u32,
     // ponytail: cleared when full, not LRU; make it an LRU if hit rates matter.
     cache: Mutex<HashMap<u32, Block>>,
 }
 
 impl Blocks {
-    pub fn new(src: Box<dyn Source>, size: usize, limits: ReaderLimits) -> Blocks {
+    pub fn new(src: Box<dyn Source>, size: usize, limits: ReaderLimits, revision: u32) -> Blocks {
         Blocks {
             src,
             size,
             limits,
+            revision,
             cache: Mutex::new(HashMap::new()),
         }
     }
@@ -91,6 +93,16 @@ fn be32(b: &[u8], at: usize) -> u32 {
 
 fn level(b: &[u8]) -> u8 {
     b[4]
+}
+
+// Native Glass requires the root revision to be no newer than the
+// database revision, and each child's revision no newer than its parent.
+fn check_revision(block: &[u8], newest: u32) -> Result<u32> {
+    let revision = be32(block, 0);
+    if revision > newest {
+        return Err(corrupt("B-tree block belongs to a later revision"));
+    }
+    Ok(revision)
 }
 
 fn count(b: &[u8]) -> usize {
@@ -223,8 +235,10 @@ impl<'a> Cursor<'a> {
         }
         let mut path = vec![];
         let mut n = root.root;
+        let mut newest = blocks.revision;
         for lvl in (0..=root.level).rev() {
             let b = blocks.get(n)?;
+            newest = check_revision(&b, newest)?;
             if level(&b) != lvl {
                 return Err(corrupt(&format!("block {n} isn't at level {lvl}")));
             }
@@ -315,6 +329,7 @@ impl<'a> Cursor<'a> {
             let (b, i) = &self.path[lvl];
             let child = branch(b, *i as usize)?.0;
             let cb = self.blocks.get(child)?;
+            check_revision(&cb, be32(b, 0))?;
             if level(&cb) as usize != lvl - 1 {
                 return Err(corrupt(&format!("block {child} is at the wrong level")));
             }
@@ -413,8 +428,41 @@ pub fn get(blocks: &Blocks, root: &Root, key: &[u8]) -> Result<Option<Vec<u8>>> 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::glass::db::{Db, POSTLIST};
+    use crate::glass::write::{BLOCKSIZE, Builder};
     use flate2::{Compression, write::DeflateEncoder};
     use std::io::Write;
+
+    #[test]
+    fn reads_older_root_and_leaf_revisions_across_a_split_tag() {
+        let value = vec![b'v'; 3 * BLOCKSIZE];
+        let mut builder = Builder::default();
+        builder.set_metadata("split", &value);
+        let mut output = std::io::Cursor::new(Vec::new());
+        builder.write(&mut output, [0; 16]).unwrap();
+        let mut bytes = output.into_inner();
+
+        // Model a later commit reusing this table's root, which itself
+        // references leaves retained from earlier commits.
+        bytes[32] = 40; // Single-byte revision field after the format and UUID.
+        for (number, block) in bytes
+            .as_chunks_mut::<BLOCKSIZE>()
+            .0
+            .iter_mut()
+            .enumerate()
+            .skip(1)
+        {
+            let revision = if level(block) == 0 { number as u32 } else { 30 };
+            block[..4].copy_from_slice(&revision.to_be_bytes());
+        }
+
+        let db = Db::open(Box::new(bytes)).unwrap();
+        assert_eq!(db.revision, 40);
+        assert_eq!(db.roots[POSTLIST].level, 1);
+        // Finding the first component seeks down from the root; reading the
+        // complete value crosses into subsequent leaves with other revisions.
+        assert_eq!(db.metadata("split").unwrap().unwrap(), value);
+    }
 
     #[test]
     fn valid_compressed_tag_honors_output_limit_including_final_byte() {

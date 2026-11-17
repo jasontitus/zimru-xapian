@@ -36,7 +36,7 @@ pub struct Db {
     #[cfg_attr(not(test), allow(dead_code))] // checked in tests
     pub uuid: [u8; 16],
     #[cfg_attr(not(test), allow(dead_code))]
-    pub revision: u64,
+    pub revision: u32,
     /// postlist, docdata, termlist, position, spelling, synonym.
     pub roots: [Root; 6],
     pub stats: Stats,
@@ -123,7 +123,7 @@ impl Db {
         }
         let uuid = head[16..32].try_into().unwrap();
         let mut p = &head[32..];
-        let revision = pack::uint(&mut p).ok_or_else(bad)?;
+        let revision = u32_of(pack::uint(&mut p).ok_or_else(bad)?)?;
         let mut roots: [Root; 6] = Default::default();
         for r in &mut roots {
             let root = pack::uint(&mut p).ok_or_else(bad)?;
@@ -168,7 +168,7 @@ impl Db {
             return Err(corrupt("inconsistent single-file block sizes"));
         }
         Ok(Db {
-            blocks: Blocks::new(src, size, limits),
+            blocks: Blocks::new(src, size, limits, revision),
             uuid,
             revision,
             roots,
@@ -247,6 +247,9 @@ impl Db {
             return Ok(None); // no chunk for this slot at or before did
         };
         let mut d = u32_of(pack::pus(&mut p).ok_or_else(bad)?)?;
+        if !p.is_empty() {
+            return Err(corrupt("extra bytes in value chunk key"));
+        }
         let tag = c.tag()?;
         let mut p = &tag[..];
         let mut v = pack::string(&mut p).ok_or_else(bad)?;
