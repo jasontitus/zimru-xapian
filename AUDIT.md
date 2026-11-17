@@ -2,6 +2,8 @@
 
 Reviewed on 2026-11-17 against the standalone fork at `54b39d4`. The changes cover the search engine, index writer, archive/JSONL command-line boundary and locked dependency graph. Reviewers challenged changes written by other reviewers. Native Xapian and libzim served as independent references.
 
+The [third-party source review](THIRD_PARTY_REVIEW.md) covers the pristine upstream implementation, native comparisons, inherited behavioral differences and the outer archive reader.
+
 ## Findings and repairs
 
 | Area | Finding | Change and evidence |

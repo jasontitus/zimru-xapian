@@ -42,6 +42,8 @@ Search streams matching document IDs and retains the best requested results. Bro
 
 The library exposes per-query and per-record limits through `Index::open_with_limits` and `ReaderLimits`. The writer holds one index in memory and reads a complete JSONL record at a time. The measured scale is 50,000 synthetic articles plus two real Kiwix archives. See the [review findings and supported operating limits](AUDIT.md) and [benchmark results](PERFORMANCE.md).
 
+The [third-party source review](THIRD_PARTY_REVIEW.md) records which findings apply to the original engine, the native interoperability tests and the remaining limits on untrusted archive ingestion.
+
 ## Verify
 
 ```sh
