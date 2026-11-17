@@ -55,6 +55,8 @@ tests/native-writer-parity.sh /path/to/xapianbuilder /path/to/native/xapianbuild
 
 For the end-to-end archive test with zimwriterfs and native libzim, see [tests/native-interop.sh](tests/native-interop.sh).
 
+[The CJK parity test](tests/cjk_zim_parity.py) builds paired ZIMs for Chinese, Japanese, Korean, and newer Han characters. It checks the actual embedded title and full-text indexes with native Xapian and compares ordered paths across both readers and writers. The runner saves the archives, logical snapshots, diffs and `results.json`. It exits unsuccessfully on any mismatch. Run `python3 tests/cjk_zim_parity.py --help` in an environment with python-libzim for the required executable paths. Use `--case zho`, `--case jpn`, `--case kor` or `--case zho-extensions` to isolate a corpus.
+
 ## Provenance and distribution
 
 The engine is extracted from Gordon Brander's `zimfile-xapian`. The archive reader is an ordinary MIT dependency of this GPL program. zimwriterfs invokes the helper as a separate process and exchanges JSONL and standard Glass files. Retain the GPL and third-party notices when redistributing, including the notices for stopword lists embedded in the executables. See [PROVENANCE.md](PROVENANCE.md), [LICENSE](LICENSE) and [the stopword notices](engine/LICENSES/README.md).
