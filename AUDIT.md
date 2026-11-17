@@ -26,8 +26,20 @@ Broad queries can still visit every match and large prefix regions can scan the 
 
 - Both Kiwix archives matched the four 30-query libzim ordered top-ten reference lists. On a separate full-text differential, 114 comparisons matched paths, scores (relative tolerance 1e-12) and percentages. An alias-heavy title fixture matched the earlier Rust release in 70 comparisons.
 - Across a prefix-expansion cutoff with equally frequent terms, native Xapian may choose a different subset. In the alias fixture six deeper lists diverged from native. The first ten matched on that fixture. A synthetic 10,000-way tie also changed the top ten. The Rust fork retains lexical order for equal frequencies. [Benchmark and expansion details](PERFORMANCE.md)
-- Ordinary Chinese, Japanese and Korean matched all six embedded index pairs and all 63 ordered queries against Xapian 1.4 with libzim 9.8.2. Xapian 2.0 differs on two fullwidth queries, and newer Han extensions differ on both versions. Single-character suggestions can also differ with older libzim. [CJK test runner](tests/cjk_zim_parity.py) · [libzim wildcard fallback change](https://github.com/openzim/libzim/commit/2b5a9056b1c29f3ecaa9820ee0bb389265ca64af)
 - `add_html`, `add_text` and `add_title` return results that callers should propagate. `IndexWriter::write` requires an empty destination. An I/O error can partially fill a caller-supplied sink. The CLI publishes completed files only.
+
+### CJK archive comparison
+
+Each writer built a ZIM from the same articles. Native Xapian decoded each embedded title and full-text index for comparison. A query counts as a match when both readers returned the same ordered paths on both writers' archives.
+
+| Native Xapian writer / query reader | Corpus | Matching index pairs | Matching queries |
+| --- | --- | ---: | ---: |
+| 1.4.29 / 1.4.23 | Chinese, Japanese and Korean | 6/6 | 63/63 |
+| 1.4.29 / 1.4.23 | Han extensions G, H and I | 0/2 | 6/12 |
+| 2.0.0 / 2.0.0 | Chinese, Japanese and Korean | 4/6 | 61/63 |
+| 2.0.0 / 2.0.0 | Han extensions G, H and I | 0/2 | 6/12 |
+
+Both query comparisons used libzim 9.8.2. The ordinary 2.0 differences were the fullwidth queries `ＡＩ` and `１２３`. Each of the three rare-Han queries differed in both full-text and title search. The reviewed release reproduced the pre-review results on both native versions. Older libzim releases can also differ on single-character suggestions. [CJK comparison runner](tests/cjk_zim_parity.py) · [libzim wildcard fallback change](https://github.com/openzim/libzim/commit/2b5a9056b1c29f3ecaa9820ee0bb389265ca64af)
 
 ## Verification of the combined changes
 
