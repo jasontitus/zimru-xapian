@@ -1,3 +1,4 @@
+// Modified for the standalone zimru-xapian tools on 2026-11-17. See PROVENANCE.md.
 //! Running a [`Query`] against a Glass database the way Xapian 1.4's matcher
 //! weighs it: BM25 (`bm25weight.cc`), synonyms weighted as one term with
 //! Xapian's term-frequency estimate (`OrPostList`), exact phrases.
@@ -7,9 +8,12 @@
 // on a huge archive scores every posting; add Xapian's bounds if a measured
 // query is too slow.
 
-use crate::Result;
 use crate::glass::Db;
+use crate::glass::db::{PostList, PostingBudget};
 use crate::query::Query;
+use crate::{Error, Result};
+use std::cmp::Reverse;
+use std::collections::BinaryHeap;
 
 /// BM25 parameters (k1, k2 is always 0, k3, b, min_normlen).
 #[derive(Clone, Copy)]
@@ -46,10 +50,10 @@ pub struct Match {
 
 struct Ctx<'a> {
     db: &'a Db,
-    doclens: &'a [u32],
     n: f64,
     len_factor: f64,
     bm: Bm25,
+    posting_budget: PostingBudget,
 }
 
 impl Ctx<'_> {
@@ -64,26 +68,34 @@ impl Ctx<'_> {
     }
 
     /// `BM25Weight::get_sumpart`.
-    fn sumpart(&self, termweight: f64, wdf: u32, did: u32) -> f64 {
-        let len = self.doclens.get(did as usize).copied().unwrap_or(0) as f64;
+    fn sumpart(&self, termweight: f64, wdf: u32, doclen: u32) -> f64 {
+        let len = f64::from(doclen);
         let normlen = (len * self.len_factor).max(self.bm.min_normlen);
         let wdf = wdf as f64;
         termweight * (wdf / (self.bm.k1 * (normlen * self.bm.b + (1.0 - self.bm.b)) + wdf))
     }
 }
 
-/// A query ready to run: terms resolved to their statistics.
-enum Node {
-    /// A term (or a synonym of terms): weighted as one, wdfs summed.
+/// Each branch owns forward-only cursors. A cached docid of 0 means it
+/// has not yet been sought; None means the branch is exhausted.
+struct Node<'a> {
+    branch: Branch<'a>,
+    did: Option<u32>,
+    estimate: u32,
+    subqs: u32,
+}
+
+enum Branch<'a> {
     Leaf {
-        terms: Vec<Vec<u8>>,
+        postings: Vec<PostList<'a>>,
         termweight: f64,
-        tf: u32,
     },
-    And(Vec<Node>),
-    Or(Vec<Node>),
-    AndNot(Box<Node>, Box<Node>),
-    Phrase(Vec<Node>, u32),
+    And {
+        children: Vec<Node<'a>>,
+        phrase: Option<(Vec<&'a str>, u32)>,
+    },
+    Or(Vec<Node<'a>>),
+    AndNot(Box<Node<'a>>, Box<Node<'a>>),
     Nothing,
 }
 
@@ -95,293 +107,284 @@ fn or_est(l: u32, r: u32, n: f64) -> u32 {
 
 /// The synonym's term frequency estimate: OR nodes built like a Huffman
 /// tree, smallest two first (`OrContext::postlist`).
-fn synonym_tf(mut tfs: Vec<u32>, n: f64) -> u32 {
-    while tfs.len() > 1 {
-        tfs.sort_unstable_by(|a, b| b.cmp(a));
-        let r = tfs.pop().unwrap();
-        let l = tfs.pop().unwrap();
-        tfs.push(or_est(l, r, n));
+fn synonym_tf(tfs: Vec<u32>, n: f64) -> u32 {
+    let mut heap: BinaryHeap<_> = tfs.into_iter().map(Reverse).collect();
+    while heap.len() > 1 {
+        let Reverse(left) = heap.pop().unwrap();
+        let Reverse(right) = heap.pop().unwrap();
+        heap.push(Reverse(or_est(left, right, n)));
     }
-    tfs.first().copied().unwrap_or(0)
+    heap.pop().map_or(0, |Reverse(tf)| tf)
 }
 
-impl Node {
-    fn build(q: &Query, ctx: &Ctx) -> Result<Node> {
-        Ok(match q {
-            Query::Term(t, _) => {
-                let tf = ctx.db.freqs(t.as_bytes())?.0;
-                if tf == 0 {
-                    Node::Nothing
-                } else {
-                    Node::Leaf {
-                        terms: vec![t.as_bytes().to_vec()],
-                        termweight: ctx.termweight(tf),
-                        tf,
+impl<'a> Node<'a> {
+    fn build(q: &'a Query, ctx: &'a Ctx<'a>, remaining_terms: &mut usize) -> Result<Self> {
+        let term_limit = || {
+            Error::Invalid(format!(
+                "expanded query exceeds the {} term limit",
+                ctx.db.limits().max_query_terms
+            ))
+        };
+        let (branch, estimate, subqs) = match q {
+            Query::Term(term, _) => {
+                *remaining_terms = remaining_terms.checked_sub(1).ok_or_else(term_limit)?;
+                match ctx
+                    .db
+                    .budgeted_postlist(term.as_bytes(), &ctx.posting_budget)?
+                {
+                    Some(pl) => {
+                        let tf = pl.tf;
+                        (
+                            Branch::Leaf {
+                                postings: vec![pl],
+                                termweight: ctx.termweight(tf),
+                            },
+                            tf,
+                            1,
+                        )
                     }
+                    None => (Branch::Nothing, 0, 0),
                 }
             }
             Query::Wildcard(prefix, max) => {
-                let mut terms = ctx.db.terms(prefix.as_bytes())?;
-                if *max > 0 && terms.len() > *max {
-                    // WILDCARD_LIMIT_MOST_FREQUENT.
-                    terms.sort_by_key(|t| std::cmp::Reverse(t.1));
-                    terms.truncate(*max);
-                    terms.sort();
-                }
-                if terms.is_empty() {
-                    return Ok(Node::Nothing);
-                }
+                let mut heap = BinaryHeap::new();
+                ctx.db.visit_terms(prefix.as_bytes(), |term, tf| {
+                    // At the root: lowest frequency, then largest lexical
+                    // term. Equal frequencies retain the first terms in the scan.
+                    if *max == 0 || heap.len() < *max {
+                        if heap.len() == *remaining_terms {
+                            return Err(term_limit());
+                        }
+                        heap.push((Reverse(tf), term));
+                    } else if heap.peek().is_some_and(|(Reverse(worst), _)| tf > *worst) {
+                        heap.pop();
+                        heap.push((Reverse(tf), term));
+                    }
+                    Ok(())
+                })?;
+                *remaining_terms -= heap.len();
+                let terms: Vec<_> = heap
+                    .into_iter()
+                    .map(|(Reverse(tf), term)| (term, tf))
+                    .collect();
                 let tf = synonym_tf(terms.iter().map(|t| t.1).collect(), ctx.n);
-                Node::Leaf {
-                    termweight: ctx.termweight(tf),
-                    tf,
-                    terms: terms.into_iter().map(|t| t.0).collect(),
+                let mut postings = Vec::new();
+                for (term, _) in terms {
+                    if let Some(pl) = ctx.db.budgeted_postlist(&term, &ctx.posting_budget)? {
+                        postings.push(pl);
+                    }
                 }
-            }
-            Query::And(v) => Node::And(
-                v.iter()
-                    .map(|q| Node::build(q, ctx))
-                    .collect::<Result<_>>()?,
-            ),
-            Query::Or(v) => Node::Or(
-                v.iter()
-                    .map(|q| Node::build(q, ctx))
-                    .collect::<Result<_>>()?,
-            ),
-            Query::AndNot(a, b) => Node::AndNot(
-                Box::new(Node::build(a, ctx)?),
-                Box::new(Node::build(b, ctx)?),
-            ),
-            Query::Phrase(v, w) => {
-                let v: Vec<Node> = v
-                    .iter()
-                    .map(|q| Node::build(q, ctx))
-                    .collect::<Result<_>>()?;
-                if ctx.db.has_positions() {
-                    Node::Phrase(v, *w)
+                if postings.is_empty() {
+                    (Branch::Nothing, 0, 0)
                 } else {
-                    Node::And(v) // no positions: Xapian treats a phrase as AND
+                    (
+                        Branch::Leaf {
+                            postings,
+                            termweight: ctx.termweight(tf),
+                        },
+                        tf,
+                        1,
+                    )
                 }
             }
+            Query::And(v) | Query::Phrase(v, _) | Query::Or(v) => {
+                let mut children = v
+                    .iter()
+                    .map(|q| Self::build(q, ctx, remaining_terms))
+                    .collect::<Result<Vec<_>>>()?;
+                let subqs = children.iter().map(|c| c.subqs).sum();
+                if matches!(q, Query::Or(_)) {
+                    let estimate = children
+                        .iter()
+                        .map(|c| c.estimate)
+                        .fold(0, u32::saturating_add);
+                    (Branch::Or(children), estimate, subqs)
+                } else {
+                    let phrase = if let Query::Phrase(_, window) = q
+                        && ctx.db.has_positions()
+                    {
+                        v.iter()
+                            .map(|q| match q {
+                                Query::Term(term, _) => Some(term.as_str()),
+                                _ => None,
+                            })
+                            .collect::<Option<Vec<_>>>()
+                            .map(|terms| (terms, *window))
+                    } else {
+                        None
+                    };
+                    // The intersection jumps ahead with its rarest list first.
+                    // Use the same order for weight addition as Xapian parity fixtures.
+                    children.sort_by_key(|c| c.estimate);
+                    let estimate = children.first().map_or(0, |c| c.estimate);
+                    (Branch::And { children, phrase }, estimate, subqs)
+                }
+            }
+            Query::AndNot(a, b) => {
+                let a = Self::build(a, ctx, remaining_terms)?;
+                let (estimate, subqs) = (a.estimate, a.subqs);
+                (
+                    Branch::AndNot(Box::new(a), Box::new(Self::build(b, ctx, remaining_terms)?)),
+                    estimate,
+                    subqs,
+                )
+            }
+        };
+        Ok(Self {
+            branch,
+            did: Some(0),
+            estimate,
+            subqs,
         })
     }
 
-    /// An estimate of how many documents match (for ordering ANDs).
-    fn est(&self) -> u32 {
-        match self {
-            Node::Leaf { tf, .. } => *tf,
-            Node::And(v) | Node::Phrase(v, _) => v.iter().map(Node::est).min().unwrap_or(0),
-            Node::Or(v) => v.iter().map(Node::est).fold(0, u32::saturating_add),
-            Node::AndNot(a, _) => a.est(),
-            Node::Nothing => 0,
+    /// First matching docid at or after target.
+    fn seek(&mut self, target: u32, db: &Db) -> Result<Option<u32>> {
+        if self.did.is_none_or(|d| d >= target) {
+            return Ok(self.did);
         }
-    }
-
-    /// Weighted leaves (`total_subqs`).
-    fn subqs(&self) -> u32 {
-        match self {
-            Node::Leaf { .. } => 1,
-            Node::And(v) | Node::Or(v) | Node::Phrase(v, _) => v.iter().map(Node::subqs).sum(),
-            Node::AndNot(a, _) => a.subqs(),
-            Node::Nothing => 0,
-        }
-    }
-
-    /// The matches, by docid; only among `within` when given.
-    fn eval(&self, ctx: &Ctx, within: Option<&[u32]>) -> Result<Vec<Match>> {
-        match self {
-            Node::Nothing => Ok(vec![]),
-            Node::Leaf {
-                terms, termweight, ..
-            } => {
-                // Sum the wdfs of every term in each document.
-                let mut wdfs: Vec<(u32, u32)> = vec![];
-                for t in terms {
-                    let Some(mut pl) = ctx.db.postlist(t)? else {
+        self.did = match &mut self.branch {
+            Branch::Nothing => None,
+            Branch::Leaf { postings, .. } => {
+                let mut first: Option<u32> = None;
+                for pl in postings {
+                    if pl.skip_to(target)? {
+                        first = Some(first.map_or(pl.did(), |d| d.min(pl.did())));
+                    }
+                }
+                first
+            }
+            Branch::Or(children) => {
+                let mut first: Option<u32> = None;
+                for child in children {
+                    if let Some(d) = child.seek(target, db)? {
+                        first = Some(first.map_or(d, |prev| prev.min(d)));
+                    }
+                }
+                first
+            }
+            Branch::And { children, phrase } => {
+                let mut candidate = target;
+                'intersect: loop {
+                    if children.is_empty() {
+                        break None;
+                    }
+                    for (i, child) in children.iter_mut().enumerate() {
+                        let Some(did) = child.seek(candidate, db)? else {
+                            break 'intersect None;
+                        };
+                        if did > candidate {
+                            candidate = did;
+                            if i != 0 {
+                                continue 'intersect;
+                            }
+                        }
+                    }
+                    if let Some((terms, window)) = phrase
+                        && !phrase_at(db, terms, *window, candidate)?
+                    {
+                        let Some(next) = candidate.checked_add(1) else {
+                            break None;
+                        };
+                        candidate = next;
                         continue;
+                    }
+                    break Some(candidate);
+                }
+            }
+            Branch::AndNot(left, right) => {
+                let mut candidate = target;
+                loop {
+                    let Some(did) = left.seek(candidate, db)? else {
+                        break None;
                     };
-                    let mut one = vec![];
-                    match within {
-                        None => {
-                            while pl.next()? {
-                                one.push((pl.did(), pl.wdf()));
-                            }
-                        }
-                        Some(ds) => {
-                            for &d in ds {
-                                if !pl.skip_to(d)? {
-                                    break;
-                                }
-                                if pl.did() == d {
-                                    one.push((d, pl.wdf()));
-                                }
-                            }
-                        }
+                    if right.seek(did, db)? != Some(did) {
+                        break Some(did);
                     }
-                    wdfs = merge(wdfs, one, |a, b| a + b);
+                    let Some(next) = did.checked_add(1) else {
+                        break None;
+                    };
+                    candidate = next;
                 }
-                Ok(wdfs
-                    .into_iter()
-                    .map(|(did, wdf)| {
-                        let len = ctx.doclens.get(did as usize).copied().unwrap_or(0);
-                        let wdf = if terms.len() > 1 { wdf.min(len) } else { wdf };
-                        Match {
-                            did,
-                            weight: ctx.sumpart(*termweight, wdf, did),
-                            subqs: 1,
-                        }
-                    })
-                    .collect())
             }
-            Node::Or(v) => {
-                let mut out: Vec<Match> = vec![];
-                for n in v {
-                    let m = n.eval(ctx, within)?;
-                    out = merge_matches(out, m);
-                }
-                Ok(out)
-            }
-            Node::And(v) | Node::Phrase(v, _) => {
-                let mut kids: Vec<&Node> = v.iter().collect();
-                kids.sort_by_key(|n| n.est());
-                let Some((first, rest)) = kids.split_first() else {
-                    return Ok(vec![]);
+        };
+        Ok(self.did)
+    }
+
+    /// Score only docs accepted by the whole query. The doclength cursor
+    /// therefore advances exactly once in increasing docid order.
+    fn score(&self, ctx: &Ctx, did: u32, doclen: u32) -> (f64, u32) {
+        match &self.branch {
+            Branch::Leaf {
+                postings,
+                termweight,
+            } => {
+                let sum: u64 = postings
+                    .iter()
+                    .filter(|p| p.did() == did)
+                    .map(|p| u64::from(p.wdf()))
+                    .sum();
+                let wdf = if postings.len() > 1 {
+                    sum.min(u64::from(doclen))
+                } else {
+                    sum
                 };
-                let mut out = first.eval(ctx, within)?;
-                for n in rest {
-                    if out.is_empty() {
-                        break;
-                    }
-                    let ds: Vec<u32> = out.iter().map(|m| m.did).collect();
-                    let m = n.eval(ctx, Some(&ds))?;
-                    out = intersect(out, m);
-                }
-                if let Node::Phrase(terms, window) = self {
-                    let mut kept = vec![];
-                    for m in out {
-                        if phrase_at(ctx, terms, *window, m.did)? {
-                            kept.push(m);
-                        }
-                    }
-                    out = kept;
-                }
-                Ok(out)
+                (ctx.sumpart(*termweight, wdf as u32, doclen), 1)
             }
-            Node::AndNot(a, b) => {
-                let l = a.eval(ctx, within)?;
-                let ds: Vec<u32> = l.iter().map(|m| m.did).collect();
-                let r = b.eval(ctx, Some(&ds))?;
-                let mut r = r.iter().map(|m| m.did).peekable();
-                Ok(l.into_iter()
-                    .filter(|m| {
-                        while r.peek().is_some_and(|&d| d < m.did) {
-                            r.next();
-                        }
-                        r.peek() != Some(&m.did)
-                    })
-                    .collect())
-            }
+            Branch::And { children, .. } | Branch::Or(children) => children
+                .iter()
+                .filter(|c| c.did == Some(did))
+                .map(|c| c.score(ctx, did, doclen))
+                .fold((0.0, 0), |(aw, ac), (bw, bc)| (aw + bw, ac + bc)),
+            Branch::AndNot(left, _) => left.score(ctx, did, doclen),
+            Branch::Nothing => (0.0, 0),
         }
     }
 }
 
-/// Whether the phrase's terms occur in order within `window` positions in `did`.
-fn phrase_at(ctx: &Ctx, terms: &[Node], window: u32, did: u32) -> Result<bool> {
-    let mut lists = vec![];
-    for t in terms {
-        let Node::Leaf { terms, .. } = t else {
-            return Ok(true);
-        }; // not a plain term: don't filter
-        lists.push(ctx.db.positions(did, &terms[0])?);
-    }
-    let Some((first, rest)) = lists.split_first() else {
+fn phrase_at(db: &Db, terms: &[&str], window: u32, did: u32) -> Result<bool> {
+    let Some((first, rest)) = terms.split_first() else {
         return Ok(false);
     };
-    'start: for &p0 in first {
-        let mut prev = p0;
-        for (i, l) in rest.iter().enumerate() {
-            let next = if window as usize == terms.len() {
-                // Exact: each term right after the previous.
-                let want = p0 + i as u32 + 1;
-                l.binary_search(&want).ok().map(|_| want)
+    // Keep only potential phrase starts and their earliest possible end.
+    // Both are nondecreasing, so each subsequent position list needs one pass.
+    let mut spans: Vec<_> = db
+        .positions(did, first.as_bytes())?
+        .into_iter()
+        .map(|p| (p, p))
+        .collect();
+    for term in rest {
+        if spans.is_empty() {
+            return Ok(false);
+        }
+        let positions = db.positions(did, term.as_bytes())?;
+        let mut ix = 0;
+        spans.retain_mut(|(start, end)| {
+            while ix < positions.len() && positions[ix] <= *end {
+                ix += 1;
+            }
+            if let Some(&next) = positions.get(ix)
+                && next - *start < window
+            {
+                *end = next;
+                true
             } else {
-                l.iter().copied().find(|&p| p > prev)
-            };
-            match next {
-                Some(p) if p < p0 + window => prev = p,
-                _ => continue 'start,
+                false
             }
-        }
-        return Ok(true);
+        });
     }
-    Ok(false)
+    Ok(!spans.is_empty())
 }
 
-fn merge(a: Vec<(u32, u32)>, b: Vec<(u32, u32)>, f: impl Fn(u32, u32) -> u32) -> Vec<(u32, u32)> {
-    let mut out = Vec::with_capacity(a.len() + b.len());
-    let (mut a, mut b) = (a.into_iter().peekable(), b.into_iter().peekable());
-    loop {
-        match (a.peek(), b.peek()) {
-            (Some(x), Some(y)) if x.0 == y.0 => {
-                out.push((x.0, f(x.1, y.1)));
-                a.next();
-                b.next();
-            }
-            (Some(x), Some(y)) if x.0 < y.0 => out.push(a.next().unwrap()),
-            (Some(_), Some(_)) | (None, Some(_)) => out.push(b.next().unwrap()),
-            (Some(_), None) => out.push(a.next().unwrap()),
-            (None, None) => return out,
-        }
-    }
-}
-
-fn merge_matches(a: Vec<Match>, b: Vec<Match>) -> Vec<Match> {
-    let mut out = Vec::with_capacity(a.len() + b.len());
-    let (mut a, mut b) = (a.into_iter().peekable(), b.into_iter().peekable());
-    loop {
-        match (a.peek(), b.peek()) {
-            (Some(x), Some(y)) if x.did == y.did => {
-                out.push(Match {
-                    did: x.did,
-                    weight: x.weight + y.weight,
-                    subqs: x.subqs + y.subqs,
-                });
-                a.next();
-                b.next();
-            }
-            (Some(x), Some(y)) if x.did < y.did => out.push(a.next().unwrap()),
-            (Some(_), Some(_)) | (None, Some(_)) => out.push(b.next().unwrap()),
-            (Some(_), None) => out.push(a.next().unwrap()),
-            (None, None) => return out,
-        }
-    }
-}
-
-/// `a` ∩ `b` (b ⊆ a's docids), weights summed.
-fn intersect(a: Vec<Match>, b: Vec<Match>) -> Vec<Match> {
-    let mut b = b.into_iter().peekable();
-    let mut out = vec![];
-    for x in a {
-        while b.peek().is_some_and(|y| y.did < x.did) {
-            b.next();
-        }
-        if let Some(y) = b.peek()
-            && y.did == x.did
-        {
-            out.push(Match {
-                did: x.did,
-                weight: x.weight + y.weight,
-                subqs: x.subqs + y.subqs,
-            });
-        }
-    }
-    out
-}
-
-/// Every document matching `q`, by docid, and the query's weighted leaf count.
-pub fn matches(db: &Db, q: &Query, bm: Bm25) -> Result<(Vec<Match>, u32)> {
-    let doclens = db.doclen_table()?;
-    let n = db.stats.doccount as f64;
+/// Visit matches by docid; intermediate branches retain cursors, never a
+/// collection of every matching document. Return the query's leaf count.
+pub fn for_each_match(
+    db: &Db,
+    q: &Query,
+    bm: Bm25,
+    mut visit: impl FnMut(Match) -> Result<()>,
+) -> Result<u32> {
+    let n = f64::from(db.stats.doccount);
     let avg = if n > 0.0 {
         db.stats.total_doclen as f64 / n
     } else {
@@ -389,13 +392,36 @@ pub fn matches(db: &Db, q: &Query, bm: Bm25) -> Result<(Vec<Match>, u32)> {
     };
     let ctx = Ctx {
         db,
-        doclens,
         n,
         len_factor: if avg > 0.0 { 1.0 / avg } else { 0.0 },
         bm,
+        posting_budget: PostingBudget::new(db.limits().max_posting_bytes),
     };
-    let node = Node::build(q, &ctx)?;
-    Ok((node.eval(&ctx, None)?, node.subqs()))
+    let mut remaining_terms = db.limits().max_query_terms;
+    let mut node = Node::build(q, &ctx, &mut remaining_terms)?;
+    let Some(mut did) = node.seek(1, db)? else {
+        return Ok(node.subqs);
+    };
+    let mut lens = db
+        .budgeted_postlist(b"", &ctx.posting_budget)?
+        .ok_or_else(|| Error::Format(format!("missing Glass document lengths for docid {did}")))?;
+    loop {
+        if !lens.skip_to(did)? || lens.did() != did {
+            return Err(Error::Format(format!(
+                "missing Glass document length for docid {did}"
+            )));
+        }
+        let (weight, subqs) = node.score(&ctx, did, lens.wdf());
+        visit(Match { did, weight, subqs })?;
+        let Some(target) = did.checked_add(1) else {
+            break;
+        };
+        let Some(next) = node.seek(target, db)? else {
+            break;
+        };
+        did = next;
+    }
+    Ok(node.subqs)
 }
 
 /// Xapian's percentages: the best document's share of matched leaves,

@@ -192,7 +192,7 @@ fn write_round_trip() {
             values.push((1, d.to_string().into_bytes()));
         }
         values.push((2, vec![])); // empty: not stored
-        assert_eq!(b.add(&data, &terms, &values), d + 1);
+        assert_eq!(b.add(&data, &terms, &values).unwrap(), d + 1);
         docs.push((data, terms, values));
     }
     b.set_metadata("language", b"eng");
@@ -294,7 +294,7 @@ fn write_deep_tree() {
     for d in 0..100_000u32 {
         let mut terms = write::Terms::new();
         terms.insert(format!("{d:0>100}").into_bytes(), (1, vec![]));
-        b.add(b"", &terms, &[]);
+        b.add(b"", &terms, &[]).unwrap();
     }
     let db = round_trip(&b, "deep");
     assert!(

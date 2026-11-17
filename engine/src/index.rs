@@ -6,6 +6,7 @@
 use crate::glass::write::{Builder, Terms};
 use crate::html;
 use crate::text::{Stemmer, parse_terms, remove_accents, should_stem};
+use crate::{Error, Result};
 use std::collections::HashSet;
 
 /// libzim's `ANCHOR_TERM`: every title starts with it, so a phrase can be
@@ -16,12 +17,33 @@ pub const MAX_TITLE_WORD: usize = 240;
 /// Xapian's default maximum word length.
 pub const MAX_WORD: usize = 64;
 
-fn add(terms: &mut Terms, term: &str, wdf: u32, pos: Option<u32>) {
-    let e = terms.entry(term.as_bytes().to_vec()).or_default();
-    e.0 += wdf;
+fn add(terms: &mut Terms, term: &str, wdf: u32, pos: Option<u32>) -> Result<()> {
+    let e = match terms.get_mut(term.as_bytes()) {
+        Some(existing) => existing,
+        None => terms.entry(term.as_bytes().to_vec()).or_default(),
+    };
+    e.0 = e.0.checked_add(wdf).ok_or_else(|| {
+        Error::Invalid("within-document frequency exceeds the supported range".into())
+    })?;
     if let Some(p) = pos {
         e.1.push(p);
     }
+    Ok(())
+}
+
+// The tokenizer stops at the first false callback. Retain a conversion
+// error so the partially generated term map is never added to the index.
+fn tokenize(
+    text: &str,
+    positions: bool,
+    mut emit: impl FnMut(&str, bool) -> Result<()>,
+) -> Result<()> {
+    let mut result = Ok(());
+    parse_terms(text, true, positions, |term, positional| {
+        result = emit(term, positional);
+        result.is_ok()
+    });
+    result
 }
 
 /// A title document's terms: `"0posanchor " + removeAccents(title)` with
@@ -33,32 +55,29 @@ pub fn title_terms(title: &str, stem: Option<&Stemmer>) -> crate::Result<Terms> 
     if unaccented.is_empty() {
         return Ok(terms);
     }
-    let mut pos = 0;
-    parse_terms(
-        &format!("{ANCHOR}{unaccented}"),
-        true,
-        true,
-        |t, positional| {
-            if t.len() > MAX_TITLE_WORD {
-                return true;
+    let mut pos = 0u32;
+    tokenize(&format!("{ANCHOR}{unaccented}"), true, |t, positional| {
+        if t.len() > MAX_TITLE_WORD {
+            return Ok(());
+        }
+        if positional {
+            pos = pos.checked_add(1).ok_or_else(|| {
+                Error::Invalid("term position exceeds the supported range".into())
+            })?;
+            add(&mut terms, t, 1, Some(pos))?;
+        } else {
+            add(&mut terms, t, 1, None)?;
+        }
+        if let Some(s) = stem
+            && should_stem(t)
+        {
+            let st = s.stem(t);
+            if !st.is_empty() {
+                add(&mut terms, &format!("Z{st}"), 1, None)?;
             }
-            if positional {
-                pos += 1;
-                add(&mut terms, t, 1, Some(pos));
-            } else {
-                add(&mut terms, t, 1, None);
-            }
-            if let Some(s) = stem
-                && should_stem(t)
-            {
-                let st = s.stem(t);
-                if !st.is_empty() {
-                    add(&mut terms, &format!("Z{st}"), 1, None);
-                }
-            }
-            true
-        },
-    );
+        }
+        Ok(())
+    })?;
     // Match xapianbuilder's guard for titles losing too much text to token limits.
     let total_len = ANCHOR.len() + unaccented.len();
     if total_len >= MAX_TITLE_WORD {
@@ -76,7 +95,7 @@ pub fn title_terms(title: &str, stem: Option<&Stemmer>) -> crate::Result<Terms> 
     if terms.len() == 1 {
         terms.clear();
         if unaccented.len() <= MAX_TITLE_WORD {
-            add(&mut terms, &unaccented, 1, None);
+            add(&mut terms, &unaccented, 1, None)?;
         }
     }
     Ok(terms)
@@ -90,22 +109,22 @@ fn index_text(
     wdf: u32,
     stem: Option<&Stemmer>,
     stopwords: &HashSet<&str>,
-) {
-    parse_terms(text, true, false, |t, _| {
+) -> Result<()> {
+    tokenize(text, false, |t, _| {
         if t.len() > MAX_WORD || stopwords.contains(t) {
-            return true;
+            return Ok(());
         }
         match stem {
             Some(s) => {
                 let st = s.stem(t);
                 if !st.is_empty() {
-                    add(terms, &st, wdf, None);
+                    add(terms, &st, wdf, None)?;
                 }
             }
-            None => add(terms, t, wdf, None),
+            None => add(terms, t, wdf, None)?,
         }
-        true
-    });
+        Ok(())
+    })
 }
 
 /// A full-text document's terms: the unaccented content (wdf 1 each), title
@@ -116,18 +135,19 @@ pub fn fulltext_terms(
     keywords: &str,
     stem: Option<&Stemmer>,
     stopwords: &HashSet<&str>,
-) -> Terms {
+) -> Result<Terms> {
     let mut terms = Terms::new();
-    index_text(&mut terms, content, 1, stem, stopwords);
+    index_text(&mut terms, content, 1, stem, stopwords)?;
     index_text(
         &mut terms,
         title,
-        content.len() as u32 / 500 + 1,
+        u32::try_from(content.len() / 500 + 1)
+            .map_err(|_| Error::Invalid("title weight exceeds the supported range".into()))?,
         stem,
         stopwords,
-    );
-    index_text(&mut terms, keywords, 3, stem, stopwords);
-    terms
+    )?;
+    index_text(&mut terms, keywords, 3, stem, stopwords)?;
+    Ok(terms)
 }
 
 /// Add an HTML item to the full-text index, as libzim does (skipped if it
@@ -140,10 +160,10 @@ pub fn add_fulltext(
     html: &str,
     stem: Option<&Stemmer>,
     stopwords: &HashSet<&str>,
-) {
+) -> Result<()> {
     let h = html::parse(html);
     if h.dump.is_empty() || !h.indexing_allowed || h.dump.contains("NOINDEX") {
-        return;
+        return Ok(());
     }
     let content = remove_accents(&h.dump);
     let title = remove_accents(title);
@@ -153,15 +173,21 @@ pub fn add_fulltext(
         &remove_accents(&h.keywords),
         stem,
         stopwords,
-    );
+    )?;
     let mut values = vec![
         (0, title.into_bytes()),
-        (1, count_words(&h.dump).to_string().into_bytes()),
+        (
+            1,
+            word_count_value(count_words(&h.dump))?
+                .to_string()
+                .into_bytes(),
+        ),
     ];
     if let Some(g) = h.geo.and_then(|(lat, lon)| geo(lat, lon)) {
         values.push((2, g));
     }
-    b.add(format!("C/{path}").as_bytes(), &terms, &values);
+    b.add(format!("C/{path}").as_bytes(), &terms, &values)?;
+    Ok(())
 }
 
 /// Add a front article (or redirect) to the title index: values 0 = the
@@ -181,7 +207,7 @@ pub fn add_title(
         format!("C/{path}").as_bytes(),
         &title_terms(title, stem)?,
         &values,
-    );
+    )?;
     Ok(())
 }
 
@@ -235,10 +261,15 @@ pub fn geo(lat: f64, lon: f64) -> Option<Vec<u8>> {
 }
 
 /// libzim's `countWords`: runs of non-whitespace bytes (C `isspace`).
-pub fn count_words(text: &str) -> u32 {
+pub fn word_count_value(count: usize) -> Result<u32> {
+    u32::try_from(count)
+        .map_err(|_| Error::Invalid("word count exceeds the supported range".into()))
+}
+
+pub fn count_words(text: &str) -> usize {
     text.split([' ', '\t', '\n', '\x0b', '\x0c', '\r'])
         .filter(|w| !w.is_empty())
-        .count() as u32
+        .count()
 }
 
 #[cfg(test)]
@@ -335,7 +366,8 @@ mod tests {
                     &remove_accents(&h.keywords),
                     st.as_ref(),
                     &HashSet::new(),
-                );
+                )
+                .unwrap();
                 let got: BTreeMap<Vec<u8>, u32> = got.into_iter().map(|(k, v)| (k, v.0)).collect();
                 let want = real.remove(&did).unwrap_or_default();
                 if got != want {
@@ -369,5 +401,18 @@ mod tests {
     fn words() {
         assert_eq!(count_words("  a b\tc\n\n d "), 4);
         assert_eq!(count_words(""), 0);
+    }
+}
+
+#[cfg(test)]
+mod frequency_tests {
+    use super::*;
+
+    #[test]
+    fn overflowing_weight_keeps_the_previous_frequency() {
+        let mut terms = Terms::new();
+        add(&mut terms, "word", u32::MAX, Some(1)).unwrap();
+        assert!(add(&mut terms, "word", 1, Some(2)).is_err());
+        assert_eq!(terms[b"word".as_slice()], (u32::MAX, vec![1]));
     }
 }

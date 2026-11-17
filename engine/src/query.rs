@@ -368,11 +368,12 @@ impl Parser<'_> {
                     while p < n && is_phrase_generator(s[p]) {
                         p += 1;
                     }
-                    if p < n && is_wordchar(s[p]) {
-                        i = p;
+                    i = p;
+                    // Xapian starts a separate AND operand at a CJK run,
+                    // even after a phrase separator (e.g. "metro-東京").
+                    if p < n && is_wordchar(s[p]) && !is_unbroken(s[p]) {
                         continue;
                     }
-                    i = p;
                 }
                 break;
             }
@@ -573,6 +574,24 @@ mod tests {
         assert_eq!(
             f("平方"),
             Some(And(vec![t("平", 1), t("平方", 1), t("方", 1)]))
+        );
+    }
+
+    #[test]
+    fn cjk_after_a_phrase_separator_preserves_both_operands() {
+        let parse = |q| fulltext(q, None, &|_| Ok(false), &HashSet::new()).unwrap();
+        let tokyo = |pos| And(vec![t("東", pos), t("東京", pos), t("京", pos)]);
+        assert_eq!(
+            parse("metro-東京"),
+            Some(And(vec![t("metro", 1), tokyo(2)]))
+        );
+        assert_eq!(
+            parse("east-west/東京 line"),
+            Some(And(vec![
+                Phrase(vec![t("east", 1), t("west", 2)], 2),
+                tokyo(3),
+                t("line", 4),
+            ]))
         );
     }
 

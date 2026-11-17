@@ -9,6 +9,8 @@
 //! the ZIM container: an [`Index`] reads its bytes through a [`Source`], and
 //! results are document paths. `zimfile` maps them to entries.
 
+#![forbid(unsafe_code)]
+
 mod glass;
 mod html;
 mod index;
@@ -22,18 +24,49 @@ mod testdata;
 
 use glass::Db;
 use matcher::Match;
-use std::collections::HashSet;
+use std::cmp::Ordering;
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::io::{Seek, Write};
 use text::{Stemmer, parse_terms, remove_accents};
 
 pub use glass::Source;
+
+/// Resource limits for Glass records, query evaluation, and index-provided stopwords.
+#[derive(Clone, Copy, Debug)]
+pub struct ReaderLimits {
+    /// Maximum bytes in a tag, both on disk and after DEFLATE expansion.
+    pub max_tag_bytes: usize,
+    /// Maximum number of 32-bit positions in a single position list.
+    pub max_positions: usize,
+    /// Maximum UTF-8 bytes of user input per query.
+    pub max_query_bytes: usize,
+    /// Maximum number of query terms after parsing and expansion.
+    pub max_query_terms: usize,
+    /// Maximum bytes of live decoded posting chunks for a single query.
+    pub max_posting_bytes: usize,
+    /// Maximum distinct nonempty words in the full-text index stoplist.
+    pub max_stopwords: usize,
+}
+
+impl Default for ReaderLimits {
+    fn default() -> Self {
+        Self {
+            max_tag_bytes: 64 * 1024 * 1024,
+            max_positions: 16 * 1024 * 1024,
+            max_query_bytes: 128 * 1024,
+            max_query_terms: 4096,
+            max_posting_bytes: 64 * 1024 * 1024,
+            max_stopwords: 65_536,
+        }
+    }
+}
 
 #[derive(Debug)]
 pub enum Error {
     Io(std::io::Error),
     /// The index is corrupt, or not a Glass database.
     Format(String),
-    /// The writer was given something it can't write.
+    /// An operation exceeds a configured limit or cannot be represented.
     Invalid(String),
 }
 
@@ -69,6 +102,37 @@ pub struct Hit {
     pub word_count: Option<u32>,
 }
 
+/// Best results sort first. Title suggestions additionally break weight ties
+/// by the original title bytes. In both modes docid is the final tie-break.
+#[derive(Clone, Debug)]
+struct Rank {
+    weight: f64,
+    title: Vec<u8>,
+    did: u32,
+}
+
+impl Ord for Rank {
+    fn cmp(&self, other: &Self) -> Ordering {
+        other
+            .weight
+            .total_cmp(&self.weight)
+            .then_with(|| self.title.cmp(&other.title))
+            .then_with(|| self.did.cmp(&other.did))
+    }
+}
+
+impl PartialOrd for Rank {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+impl PartialEq for Rank {
+    fn eq(&self, other: &Self) -> bool {
+        self.cmp(other) == Ordering::Equal
+    }
+}
+impl Eq for Rank {}
+
 /// One embedded index, opened.
 pub struct Index {
     db: Db,
@@ -76,7 +140,14 @@ pub struct Index {
 
 impl Index {
     pub fn open(src: Box<dyn Source>) -> Result<Index> {
-        Ok(Index { db: Db::open(src)? })
+        Self::open_with_limits(src, ReaderLimits::default())
+    }
+
+    /// Open an index with explicit per-record decoder limits.
+    pub fn open_with_limits(src: Box<dyn Source>, limits: ReaderLimits) -> Result<Index> {
+        Ok(Index {
+            db: Db::open_with_limits(src, limits)?,
+        })
     }
 
     /// Read an index metadata value, preserving the distinction between missing data and read errors.
@@ -93,19 +164,42 @@ impl Index {
         Ok(text::stemmer(lang.split(',').next().unwrap_or("")))
     }
 
+    fn normalize_query(&self, q: &str) -> Result<String> {
+        let limit = self.db.limits().max_query_bytes;
+        if q.len() > limit {
+            return Err(Error::Invalid(format!(
+                "query exceeds the {limit} byte limit"
+            )));
+        }
+        Ok(remove_accents(q))
+    }
+
+    fn document_path(&self, did: u32) -> Result<String> {
+        let bytes = self
+            .db
+            .data(did)?
+            .filter(|s| !s.is_empty())
+            .ok_or_else(|| Error::Format(format!("missing document path for docid {did}")))?;
+        String::from_utf8(bytes)
+            .map_err(|_| Error::Format(format!("invalid UTF-8 document path for docid {did}")))
+    }
+
     fn exists(&self, term: &str) -> Result<bool> {
         Ok(self.db.freqs(term.as_bytes())?.0 > 0)
     }
 
     /// Full-text search: the best `limit` documents for `q`, as libzim ranks them.
     pub fn search(&self, q: &str, limit: usize, lang: &str) -> Result<Vec<Hit>> {
+        if limit == 0 || q.is_empty() {
+            return Ok(vec![]);
+        }
+        let normalized = self.normalize_query(q)?;
         let db = &self.db;
         let stem = self.stemmer(lang)?;
         let metadata = db.metadata("stopwords")?.unwrap_or_default();
-        let list = String::from_utf8_lossy(&metadata);
-        let words = stopwords::parse(&list);
+        let words = stopwords::from_metadata(&metadata, db.limits().max_stopwords)?;
         let Some(query) = query::fulltext(
-            &remove_accents(q),
+            &normalized,
             stem.as_ref(),
             &|term| self.exists(term),
             &words,
@@ -113,30 +207,37 @@ impl Index {
         else {
             return Ok(vec![]);
         };
-        let (mut ms, total) = matcher::matches(db, &query, matcher::FULLTEXT)?;
-        let Some(best) = ms.iter().fold(None::<Match>, |b, m| match b {
-            Some(b) if b.weight >= m.weight => Some(b),
-            _ => Some(*m),
-        }) else {
+        let mut top = BTreeSet::<Rank>::new();
+        let mut best: Option<Match> = None;
+        let total = matcher::for_each_match(db, &query, matcher::FULLTEXT, |m| {
+            if best.is_none_or(|b| m.weight > b.weight) {
+                best = Some(m);
+            }
+            let rank = Rank {
+                weight: m.weight,
+                title: vec![],
+                did: m.did,
+            };
+            if top.len() < limit || top.last().is_some_and(|worst| rank < *worst) {
+                top.insert(rank);
+                if top.len() > limit {
+                    top.pop_last();
+                }
+            }
+            Ok(())
+        })?;
+        let Some(best) = best else {
             return Ok(vec![]);
         };
-        // By weight, then docid (the input order: the sort is stable).
-        ms.sort_by(|a, b| b.weight.total_cmp(&a.weight));
-        let mut hits = vec![];
-        for m in ms {
-            if hits.len() == limit {
-                break;
-            }
-            let Some(path) = db.data(m.did)? else {
-                continue;
-            };
+        let mut hits = Vec::with_capacity(top.len());
+        for rank in top {
             let word_count = db
-                .value(m.did, 1)?
+                .value(rank.did, 1)?
                 .and_then(|v| String::from_utf8(v).ok()?.parse().ok());
             hits.push(Hit {
-                path: String::from_utf8_lossy(&path).into_owned(),
-                score: m.weight,
-                percent: matcher::percent(m.weight, &best, total),
+                path: self.document_path(rank.did)?,
+                score: rank.weight,
+                percent: matcher::percent(rank.weight, &best, total),
                 word_count,
             });
         }
@@ -145,44 +246,74 @@ impl Index {
 
     /// Title suggestions, as libzim makes them: document paths.
     pub fn suggest(&self, q: &str, limit: usize, lang: &str) -> Result<Vec<String>> {
+        if limit == 0 || q.is_empty() {
+            return Ok(vec![]);
+        }
+        let normalized = self.normalize_query(q)?;
         let db = &self.db;
         let stem = self.stemmer(lang)?;
-        let Some(query) =
-            query::suggestion(&remove_accents(q), stem.as_ref(), &|term| self.exists(term))?
+        let Some(query) = query::suggestion(&normalized, stem.as_ref(), &|term| self.exists(term))?
         else {
             return Ok(vec![]);
         };
-        let (mut ms, _) = matcher::matches(db, &query, matcher::SUGGEST)?;
-        ms.sort_by(|a, b| b.weight.total_cmp(&a.weight));
-        // Ties on weight: by title (value 0), then docid. Collapse on the
-        // target path (value 1). Values are read only for groups reached.
-        let mut out = vec![];
-        let mut seen = std::collections::HashSet::new();
-        let mut i = 0;
-        while i < ms.len() && out.len() < limit {
-            let j = i + ms[i..]
-                .iter()
-                .take_while(|m| m.weight == ms[i].weight)
-                .count();
-            let mut group = vec![];
-            for m in &ms[i..j] {
-                group.push((db.value(m.did, 0)?.unwrap_or_default(), m.did));
+        // Retain the best representative of each target among the top K.
+        // An evicted target may re-enter later through a better-scoring alias.
+        let mut top = BTreeMap::<Rank, Vec<u8>>::new();
+        let mut retained_targets = HashMap::<Vec<u8>, Rank>::new();
+        matcher::for_each_match(db, &query, matcher::SUGGEST, |m| {
+            let worst = top.last_key_value().map(|(rank, _)| rank);
+            if top.len() == limit && worst.is_some_and(|w| m.weight < w.weight) {
+                return Ok(());
             }
-            group.sort();
-            for (_, did) in group {
-                let key = db.value(did, 1)?.unwrap_or_default();
-                if !key.is_empty() && !seen.insert(key) {
-                    continue;
-                }
-                if out.len() < limit
-                    && let Some(path) = db.data(did)?
-                {
-                    out.push(String::from_utf8_lossy(&path).into_owned());
-                }
+            let rank = Rank {
+                weight: m.weight,
+                title: db.value(m.did, 0)?.unwrap_or_default(),
+                did: m.did,
+            };
+            if top.len() == limit && worst.is_some_and(|w| rank >= *w) {
+                return Ok(());
             }
-            i = j;
+            let target = db.value(m.did, 1)?.unwrap_or_default();
+            if retained_targets.get(&target).is_some_and(|r| rank >= *r) {
+                return Ok(());
+            }
+            if !target.is_empty()
+                && let Some(old) = retained_targets.insert(target.clone(), rank.clone())
+            {
+                top.remove(&old);
+            }
+            top.insert(rank, target);
+            if top.len() > limit
+                && let Some((_, key)) = top.pop_last()
+            {
+                retained_targets.remove(&key);
+            }
+            Ok(())
+        })?;
+        top.into_keys()
+            .map(|rank| self.document_path(rank.did))
+            .collect()
+    }
+}
+
+#[cfg(test)]
+mod path_tests {
+    use super::*;
+    use crate::glass::write::{Builder, Terms};
+    use std::io::Cursor;
+
+    #[test]
+    fn selected_documents_require_a_utf8_path() {
+        let terms = Terms::from([(b"prairie".to_vec(), (1, vec![]))]);
+        for data in [&b""[..], &[0xff]] {
+            let mut db = Builder::default();
+            db.add(data, &terms, &[]).unwrap();
+            let mut file = Cursor::new(Vec::new());
+            db.write(&mut file, [0; 16]).unwrap();
+            let i = Index::open(Box::new(file.into_inner())).unwrap();
+            assert!(matches!(i.search("prairie", 1, ""), Err(Error::Format(_))));
+            assert!(matches!(i.suggest("prairie", 1, ""), Err(Error::Format(_))));
         }
-        Ok(out)
     }
 }
 
@@ -204,7 +335,7 @@ impl IndexWriter {
             fulltext,
             language: language.into(),
             stemmer: text::stemmer(language),
-            stopwords: stopwords::parse(stopwords::bundled(language)),
+            stopwords: stopwords::words(stopwords::bundled(language)).collect(),
             builder: Default::default(),
         }
     }
@@ -225,24 +356,43 @@ impl IndexWriter {
         self.stemmer = text::stemmer(language);
     }
 
-    /// Index literal non-HTML content, as accepted by the xapianbuilder CLI.
-    pub fn add_text(&mut self, path: &str, title: &str, body: &str) {
+    /// Index literal non-HTML content. Returns an error for a title writer
+    /// or when the document exceeds the supported Glass limits.
+    pub fn add_text(&mut self, path: &str, title: &str, body: &str) -> Result<()> {
+        if !self.fulltext {
+            return Err(Error::Invalid(
+                "text documents require a full-text writer".into(),
+            ));
+        }
         if body.is_empty() {
-            return;
+            return Ok(());
         }
         let title = remove_accents(title);
-        let terms = index::fulltext_terms(body, &title, "", self.stemmer.as_ref(), &self.stopwords);
+        let terms =
+            index::fulltext_terms(body, &title, "", self.stemmer.as_ref(), &self.stopwords)?;
         let values = [
             (0, title.into_bytes()),
-            (1, body.split_whitespace().count().to_string().into_bytes()),
+            (
+                1,
+                index::word_count_value(body.split_whitespace().count())?
+                    .to_string()
+                    .into_bytes(),
+            ),
         ];
         self.builder
-            .add(format!("C/{path}").as_bytes(), &terms, &values);
+            .add(format!("C/{path}").as_bytes(), &terms, &values)?;
+        Ok(())
     }
 
     /// Add an HTML item at `C/<path>` (skipped if it has no text or asks not
-    /// to be indexed, as in libzim).
-    pub fn add_html(&mut self, path: &str, title: &str, html: &str) {
+    /// to be indexed, as in libzim). Returns an error for a title writer
+    /// or when the document exceeds the supported Glass limits.
+    pub fn add_html(&mut self, path: &str, title: &str, html: &str) -> Result<()> {
+        if !self.fulltext {
+            return Err(Error::Invalid(
+                "HTML documents require a full-text writer".into(),
+            ));
+        }
         index::add_fulltext(
             &mut self.builder,
             path,
@@ -250,11 +400,18 @@ impl IndexWriter {
             html,
             self.stemmer.as_ref(),
             &self.stopwords,
-        );
+        )
     }
 
     /// Add a front article, or a redirect to `target`, at `C/<path>`.
+    /// Returns an error for a full-text writer, a title with too much
+    /// discarded text, or a document exceeding the supported Glass limits.
     pub fn add_title(&mut self, path: &str, title: &str, target: Option<&str>) -> Result<()> {
+        if self.fulltext {
+            return Err(Error::Invalid(
+                "title documents require a title writer".into(),
+            ));
+        }
         index::add_title(
             &mut self.builder,
             path,
@@ -268,7 +425,10 @@ impl IndexWriter {
         self.builder.doccount() == 0
     }
 
-    /// Write the database (with libzim's metadata) to `out`, from offset 0.
+    /// Finish the database in an empty seekable destination with the given UUID.
+    /// A nonempty destination is rejected before writing, restoring its cursor.
+    /// A later I/O error can leave a partial database. Write to a fresh temporary
+    /// file and publish it after success when the result will be shared.
     pub fn write(mut self, out: &mut (impl Write + Seek), uuid: [u8; 16]) -> Result<()> {
         index::set_metadata(&mut self.builder, self.fulltext, &self.language);
         self.builder.write(out, uuid)
@@ -287,35 +447,53 @@ pub fn snippet(html: &str, q: &str) -> String {
         words.push(t.to_string());
         true
     });
-    let starts: Vec<usize> = text
-        .char_indices()
-        .filter(|&(i, c)| {
-            !c.is_whitespace() && (i == 0 || text[..i].ends_with(char::is_whitespace))
-        })
-        .map(|(i, _)| i)
-        .collect();
-    let hit = starts.iter().position(|&s| {
-        let w: String = text[s..]
-            .chars()
-            .take_while(|c| !c.is_whitespace())
-            .collect();
-        let w = remove_accents(w.trim_matches(|c: char| !c.is_alphanumeric()));
-        words
-            .iter()
-            .any(|q| q.len() >= 3 && w.starts_with(q.as_str()) || *q == w)
-    });
-    // A few words of context before the first hit.
-    let from = hit.map_or(0, |h| starts[h.saturating_sub(4)]);
-    let mut s: String = text[from..]
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ");
-    if s.chars().count() > CHARS {
-        s = s.chars().take(CHARS).collect();
+    // Follow the scan four words behind. Only the returned window needs
+    // allocation, even if the first matching word is near the end.
+    let mut start = text.split_whitespace();
+    let mut found = false;
+    if !words.is_empty() {
+        for (i, word) in text.split_whitespace().enumerate() {
+            let word = remove_accents(word.trim_matches(|c: char| !c.is_alphanumeric()));
+            if words
+                .iter()
+                .any(|q| q == &word || (q.len() >= 3 && word.starts_with(q)))
+            {
+                found = true;
+                break;
+            }
+            if i >= 4 {
+                start.next();
+            }
+        }
+    }
+    if !found {
+        start = text.split_whitespace();
+    }
+    let mut chars = start
+        .flat_map(|word| std::iter::once(' ').chain(word.chars()))
+        .skip(1);
+    let mut s: String = chars.by_ref().take(CHARS).collect();
+    if chars.next().is_some() {
         if let Some(cut) = s.rfind(' ') {
             s.truncate(cut);
         }
         s.push('…');
     }
     s
+}
+
+#[cfg(test)]
+mod snippet_tests {
+    use super::snippet;
+
+    #[test]
+    fn keeps_four_preceding_words_and_truncates_on_a_character_boundary() {
+        assert_eq!(
+            snippet("<p>one two three four five six café seven</p>", "cafe"),
+            "three four five six café seven"
+        );
+        let html = format!("<p>{}</p>", "界".repeat(250));
+        assert_eq!(snippet(&html, ""), format!("{}…", "界".repeat(200)));
+        assert_eq!(snippet("<p>first     second</p>", "absent"), "first second");
+    }
 }

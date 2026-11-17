@@ -10,9 +10,9 @@
 //! - Branch item: `u32 child | u8 K | key | u16 component`. A branch's first
 //!   item is never compared (it's −∞).
 
-use crate::{Error, Result};
+use crate::{Error, ReaderLimits, Result};
+use flate2::{Decompress, FlushDecompress, Status};
 use std::collections::HashMap;
-use std::io::Read;
 use std::sync::{Arc, Mutex};
 
 pub const DIR_START: usize = 11;
@@ -46,15 +46,17 @@ pub type Block = Arc<[u8]>;
 pub struct Blocks {
     src: Box<dyn Source>,
     pub size: usize,
+    pub limits: ReaderLimits,
     // ponytail: cleared when full, not LRU; make it an LRU if hit rates matter.
     cache: Mutex<HashMap<u32, Block>>,
 }
 
 impl Blocks {
-    pub fn new(src: Box<dyn Source>, size: usize) -> Blocks {
+    pub fn new(src: Box<dyn Source>, size: usize, limits: ReaderLimits) -> Blocks {
         Blocks {
             src,
             size,
+            limits,
             cache: Mutex::new(HashMap::new()),
         }
     }
@@ -150,6 +152,45 @@ fn branch(b: &[u8], i: usize) -> Result<(u32, &[u8], usize)> {
         return Err(corrupt("branch item out of the block"));
     }
     Ok((be32(b, o), &b[o + 5..o + 5 + k], be16(b, o + 5 + k)))
+}
+
+fn append_tag(out: &mut Vec<u8>, data: &[u8], limit: usize) -> Result<()> {
+    if data.len() > limit.saturating_sub(out.len()) {
+        return Err(Error::Invalid(format!(
+            "Glass tag exceeds the {limit}-byte reader limit"
+        )));
+    }
+    let required = out.len() + data.len();
+    if required > out.capacity() {
+        let capacity = required.max(out.capacity().saturating_mul(2)).min(limit);
+        out.try_reserve_exact(capacity - out.len())
+            .map_err(|_| Error::Invalid("cannot allocate Glass tag".into()))?;
+    }
+    out.extend_from_slice(data);
+    Ok(())
+}
+
+fn inflate_tag(tag: &[u8], limit: usize) -> Result<Vec<u8>> {
+    let mut decoder = Decompress::new(false);
+    let mut out = Vec::new();
+    let mut chunk = [0; 8192];
+    loop {
+        let (input, output) = (decoder.total_in(), decoder.total_out());
+        let status = decoder
+            .decompress(&tag[input as usize..], &mut chunk, FlushDecompress::None)
+            .map_err(|e| corrupt(&format!("bad compressed tag: {e}")))?;
+        let produced = (decoder.total_out() - output) as usize;
+        append_tag(&mut out, &chunk[..produced], limit)?;
+        if status == Status::StreamEnd {
+            if decoder.total_in() != tag.len() as u64 {
+                return Err(corrupt("extra bytes after compressed tag"));
+            }
+            return Ok(out);
+        }
+        if decoder.total_in() == input && produced == 0 {
+            return Err(corrupt("incomplete compressed tag"));
+        }
+    }
 }
 
 /// A table's root info (`RootInfo`).
@@ -319,13 +360,19 @@ impl<'a> Cursor<'a> {
     /// The current entry's whole tag: its components joined, inflated if
     /// compressed. Leaves the cursor on the entry.
     pub fn tag(&self) -> Result<Vec<u8>> {
+        self.tag_limited(self.blocks.limits.max_tag_bytes)
+    }
+
+    pub fn tag_limited(&self, available: usize) -> Result<Vec<u8>> {
         let (b, i) = &self.path[0];
         if *i < 0 {
             return Err(corrupt("no current entry"));
         }
         let it = leaf(b, *i as usize)?;
         let compressed = it.flags & COMPRESSED != 0;
-        let mut tag = it.tag.to_vec();
+        let limit = available.min(self.blocks.limits.max_tag_bytes);
+        let mut tag = Vec::new();
+        append_tag(&mut tag, it.tag, limit)?;
         if it.flags & LAST == 0 {
             let mut c = Cursor {
                 blocks: self.blocks,
@@ -342,18 +389,14 @@ impl<'a> Cursor<'a> {
                 if it.key != key || it.component != component || it.flags & FIRST != 0 {
                     return Err(corrupt("inconsistent tag continuation"));
                 }
-                tag.extend_from_slice(it.tag);
+                append_tag(&mut tag, it.tag, limit)?;
                 if it.flags & LAST != 0 {
                     break;
                 }
             }
         }
         if compressed {
-            let mut out = vec![];
-            flate2::read::DeflateDecoder::new(&tag[..])
-                .read_to_end(&mut out)
-                .map_err(|e| corrupt(&format!("bad compressed tag: {e}")))?;
-            tag = out;
+            return inflate_tag(&tag, limit);
         }
         Ok(tag)
     }
@@ -364,5 +407,28 @@ pub fn get(blocks: &Blocks, root: &Root, key: &[u8]) -> Result<Option<Vec<u8>>> 
     match Cursor::seek_le(blocks, root, key)? {
         Some(c) if c.key()? == Some(key) => Ok(Some(c.tag()?)),
         _ => Ok(None),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use flate2::{Compression, write::DeflateEncoder};
+    use std::io::Write;
+
+    #[test]
+    fn valid_compressed_tag_honors_output_limit_including_final_byte() {
+        let input = "A paragraph about Glass.\n".repeat(700);
+        let mut encoder = DeflateEncoder::new(Vec::new(), Compression::default());
+        encoder.write_all(input.as_bytes()).unwrap();
+        let compressed = encoder.finish().unwrap();
+        assert_eq!(
+            inflate_tag(&compressed, input.len()).unwrap(),
+            input.as_bytes()
+        );
+        assert!(matches!(
+            inflate_tag(&compressed, input.len() - 1),
+            Err(Error::Invalid(_))
+        ));
     }
 }

@@ -1,7 +1,9 @@
+// Modified for the standalone zimru-xapian tools on 2026-11-17. See PROVENANCE.md.
 //! Position lists: `uint last`, then (2+ positions) an interpolative-coded
 //! bitstream, LSB first (`glass_positionlist.cc`, `common/bitstream.cc`).
 
 use super::pack;
+use crate::{Error, Result};
 
 fn hob(x: u64) -> u32 {
     64 - x.leading_zeros()
@@ -111,11 +113,13 @@ impl Reader<'_> {
         Some(p)
     }
 
-    fn interpolative(&mut self, pos: &mut [u64], mut j: usize, k: usize) -> Option<()> {
+    fn interpolative(&mut self, pos: &mut [u32], mut j: usize, k: usize) -> Option<()> {
         while j + 1 < k {
             let mid = j + (k - j) / 2;
-            let outof = (pos[k] + j as u64 + 1).checked_sub(pos[j] + k as u64)?;
-            pos[mid] = self.decode(outof)? + pos[j] + (mid - j) as u64;
+            let range = u64::from(pos[k]).checked_sub(u64::from(pos[j]))?;
+            let outof = range.checked_sub((k - j) as u64)? + 1;
+            let lowest = u64::from(pos[j]) + (mid - j) as u64;
+            pos[mid] = u32::try_from(lowest + self.decode(outof)?).ok()?;
             self.interpolative(pos, j, mid)?;
             j = mid;
         }
@@ -123,29 +127,48 @@ impl Reader<'_> {
     }
 }
 
-/// Decode a position list (`None` if it's corrupt).
-pub fn decode(data: &[u8]) -> Option<Vec<u64>> {
+fn bad_positions() -> Error {
+    Error::Format("Xapian index: bad position list".into())
+}
+
+/// Decode a single term's positions within one document.
+pub fn decode(data: &[u8], max_positions: usize) -> Result<Vec<u32>> {
     let mut p = data;
-    let last = pack::uint(&mut p)?;
-    if p.is_empty() {
-        return Some(vec![last]);
-    }
+    let last = pack::uint(&mut p)
+        .and_then(|v| u32::try_from(v).ok())
+        .ok_or_else(bad_positions)?;
     let mut r = Reader {
         buf: p,
         idx: 0,
         acc: 0,
         n: 0,
     };
-    let first = r.decode(last)?;
-    let n = usize::try_from(r.decode(last - first)?).ok()? + 2;
-    if n as u64 > last - first + 1 {
-        return None;
+    let (first, count) = if p.is_empty() {
+        (last, 1)
+    } else {
+        let first = r.decode(u64::from(last)).ok_or_else(bad_positions)? as u32;
+        let span = u64::from(last - first);
+        let count = r.decode(span).ok_or_else(bad_positions)? + 2;
+        if count > span + 1 {
+            return Err(bad_positions());
+        }
+        (first, usize::try_from(count).map_err(|_| bad_positions())?)
+    };
+    if count > max_positions {
+        return Err(Error::Invalid(format!(
+            "Glass position list exceeds the {max_positions}-position reader limit"
+        )));
     }
-    let mut pos = vec![0; n];
-    pos[0] = first;
-    pos[n - 1] = last;
-    r.interpolative(&mut pos, 0, n - 1)?;
-    Some(pos)
+    let mut positions = Vec::new();
+    positions
+        .try_reserve_exact(count)
+        .map_err(|_| Error::Invalid("cannot allocate Glass position list".into()))?;
+    positions.resize(count, 0);
+    positions[0] = first;
+    positions[count - 1] = last;
+    r.interpolative(&mut positions, 0, count - 1)
+        .ok_or_else(bad_positions)?;
+    Ok(positions)
 }
 
 #[cfg(test)]
@@ -153,8 +176,18 @@ mod tests {
     use super::*;
 
     #[test]
+    fn position_limit_is_applied_to_the_decoded_count() {
+        let encoded = encode(&[1, 2, 3, u64::from(u32::MAX)]);
+        assert_eq!(decode(&encoded, 4).unwrap(), [1, 2, 3, u32::MAX]);
+        assert!(matches!(decode(&encoded, 3), Err(Error::Invalid(_))));
+        let single = encode(&[0]);
+        assert_eq!(decode(&single, 1).unwrap(), [0]);
+        assert!(matches!(decode(&single, 0), Err(Error::Invalid(_))));
+    }
+
+    #[test]
     fn round_trips() {
-        assert_eq!(decode(&[0x04, 0x02]), Some(vec![2, 4])); // from a real index
+        assert_eq!(decode(&[0x04, 0x02], 2).unwrap(), vec![2, 4]); // from a real index
         let cases: Vec<Vec<u64>> = vec![
             vec![1],
             vec![7],
@@ -165,7 +198,14 @@ mod tests {
             (1..300).map(|i| i * i).collect(),
         ];
         for c in cases {
-            assert_eq!(decode(&encode(&c)).as_ref(), Some(&c));
+            assert_eq!(
+                decode(&encode(&c), c.len())
+                    .unwrap()
+                    .into_iter()
+                    .map(u64::from)
+                    .collect::<Vec<_>>(),
+                c
+            );
         }
         // Pseudo-random lists.
         let mut x = 0x2545_f491_4f6c_dd1du64;
@@ -179,7 +219,14 @@ mod tests {
                 p += x % 1000 + 1;
                 v.push(p);
             }
-            assert_eq!(decode(&encode(&v)), Some(v));
+            assert_eq!(
+                decode(&encode(&v), v.len())
+                    .unwrap()
+                    .into_iter()
+                    .map(u64::from)
+                    .collect::<Vec<_>>(),
+                v
+            );
         }
     }
 }

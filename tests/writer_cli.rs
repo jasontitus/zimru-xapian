@@ -94,3 +94,45 @@ fn long_title_token_errors_before_publication() {
     assert!(String::from_utf8_lossy(&result.stderr).contains("line 2"));
     assert!(!db.exists());
 }
+
+#[test]
+fn writer_refuses_to_mix_document_schemas() {
+    let mut fulltext = zimfile_xapian::IndexWriter::fulltext("eng");
+    let mut titles = zimfile_xapian::IndexWriter::title("eng");
+    assert!(fulltext.add_title("one", "One", None).is_err());
+    assert!(titles.add_text("one", "One", "body").is_err());
+    assert!(titles.add_html("one", "One", "<p>body</p>").is_err());
+    assert!(fulltext.is_empty() && titles.is_empty());
+}
+
+#[test]
+fn concurrent_builders_publish_one_complete_database() {
+    let temp = tempfile::tempdir().unwrap();
+    let input = temp.path().join("input");
+    let db = temp.path().join("output");
+    fs::write(&input, r#"{"path":"one","title":"One","body":"shared"}"#).unwrap();
+    std::thread::scope(|scope| {
+        let first = scope.spawn(|| run(&input, &db, "fulltext", &[]));
+        let second = run(&input, &db, "fulltext", &[]);
+        assert_ne!(
+            first.join().unwrap().status.success(),
+            second.status.success()
+        );
+    });
+    let index = Index::open(Box::new(fs::read(db).unwrap())).unwrap();
+    assert_eq!(index.search("shared", 1, "").unwrap()[0].path, "C/one");
+}
+
+#[cfg(unix)]
+#[test]
+fn empty_input_preserves_existing_dangling_link() {
+    let temp = tempfile::tempdir().unwrap();
+    let input = temp.path().join("input");
+    let destination = temp.path().join("output");
+    let target = temp.path().join("missing");
+    fs::write(&input, "").unwrap();
+    std::os::unix::fs::symlink(&target, &destination).unwrap();
+    let out = run(&input, &destination, "title", &["--skip-if-empty"]);
+    assert!(!out.status.success());
+    assert_eq!(fs::read_link(destination).unwrap(), target);
+}

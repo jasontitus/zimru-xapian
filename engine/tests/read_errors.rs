@@ -22,6 +22,6 @@ fn read_failures_propagate_before_query_evaluation() {
     let index = Index::open(Box::new(HeaderOnly(file.into_inner()))).unwrap();
 
     assert!(matches!(index.metadata("kind"), Err(Error::Io(_))));
-    assert!(matches!(index.search("", 1, "eng"), Err(Error::Io(_))));
-    assert!(matches!(index.suggest("", 1, "eng"), Err(Error::Io(_))));
+    assert!(matches!(index.search("c++", 1, "eng"), Err(Error::Io(_))));
+    assert!(matches!(index.suggest("c++", 1, "eng"), Err(Error::Io(_))));
 }

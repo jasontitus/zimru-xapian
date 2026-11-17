@@ -20,6 +20,8 @@ serde_json = "1"
 tempfile = "3"
 uuid = { version = "1", features = ["v4"] }
 memmap2 = "0.9"
+xz2 = "0.1"
+zstd = { version = "0.13", default-features = false }
 
 [dev-dependencies]
 zimru = { git = "https://github.com/jasontitus/zimru", rev = "061afbc2920c78fc4ecb7211cb9ef4f3655dba35", features = ["writer"] }

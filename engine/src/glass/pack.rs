@@ -83,7 +83,10 @@ pub fn put_pus(s: &mut Vec<u8>, v: u64) {
     let len = (64 + 5 - v.leading_zeros() as usize) / 7; // total bytes
     let mask = (0xffu32 << (10 - len)) as u8;
     let bytes = v.to_be_bytes();
-    s.push(bytes[8 - len] | mask);
+    // The longest encoding uses a separate prefix byte plus all eight
+    // bytes of the integer.
+    let header = if len == 9 { 0 } else { bytes[8 - len] };
+    s.push(header | mask);
     s.extend_from_slice(&bytes[9 - len..]);
 }
 
@@ -145,6 +148,8 @@ mod tests {
             0x40_0000,
             1 << 40,
             u64::MAX >> 8,
+            1 << 63,
+            u64::MAX,
         ] {
             let mut s = vec![];
             put_uint(&mut s, v);

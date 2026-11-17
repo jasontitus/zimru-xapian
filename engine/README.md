@@ -5,10 +5,7 @@ bindings. It reads, searches and writes the single-file Glass databases Kiwix
 archives embed (`X/fulltext/xapian`, `X/title/xapian`), with libzim's
 semantics on Xapian 1.4.
 
-It's the search engine behind [zimfile](../zimfile), and knows libzim's index
-conventions but not the ZIM container: an `Index` reads bytes through a
-`Source`, and results are document paths (`C/<path>`). zimfile maps them to
-entries.
+In this fork, `zimsearch` uses zimru to open the archive. The engine reads the embedded database through a `Source` and returns document paths such as `C/<path>`.
 
 ```rust
 use zimfile_xapian::{Index, IndexWriter};
@@ -18,9 +15,11 @@ let hits = index.search("plate tectonics", 10, "eng")?; // path, BM25 score, per
 let paths = index.suggest("plate", 10, "eng")?;
 
 let mut w = IndexWriter::fulltext("eng");
-w.add_html("Plate_tectonics", "Plate tectonics", &html);
+w.add_html("Plate_tectonics", "Plate tectonics", &html)?;
 w.write(&mut file, uuid)?;
 ```
+
+The document insertion methods return a `Result` and validate the writer mode and supported Glass sizes. Pass a new temporary file or an empty `Cursor<Vec<u8>>` to `write`. A nonempty destination is rejected before any database bytes are written. Publish a temporary file after `write` succeeds, since an I/O error during encoding can leave an incomplete file.
 
 The language argument picks the stemmer when an index doesn't record one.
 
@@ -30,20 +29,9 @@ Searches rank like libzim on Xapian 1.4: the same query parsing, term
 generation (`removeAccents`, Xapian's word splitting, CJK n-grams, Snowball
 stemmers as Xapian 1.4 ships them), BM25 parameters, sort and collapse.
 
-How that's checked:
+The [standalone verification suite](../README.md#verify) compares regenerated terms, within-document frequencies and positions on two Kiwix archives. It checks 120 ordered top-ten results against libzim reference data. Native interoperability tests open both writers' databases in Xapian and search the packaged archives with libzim. The [review](../AUDIT.md) records the tested limits and compatibility differences.
 
-- Every title and full-text document of two Kiwix archives regenerates
-  libzim's exact terms, wdfs and positions from its HTML and title (this
-  crate's tests, which read the archives through zimfile).
-- On 120 reference queries over those archives, zimfile returns libzim's top
-  10 exactly (`zimfile/tests/xapian.rs`).
-- Indexes written by `IndexWriter` (through zimfile's `Creator::index`) pass
-  `xapian-check` 1.4 and 2.1. The archives pass `zimcheck -A`, and libzim
-  returns the same results as zimfile on them.
-- libzim's own suggestion and search tests are ported, and they pass through
-  real libzim too (`zimfile/tests/libzim_xapian.rs`).
-
-Shortcuts, each harmless to libzim readers:
+Implementation coverage
 
 | Shortcut | Cost | Upgrade |
 |---|---|---|
@@ -54,7 +42,7 @@ Shortcuts, each harmless to libzim readers:
 | Every match is scored exactly: no max-weight pruning | A very common word on a huge archive is slow | Xapian's weight bounds |
 | Snippets: a plain-text window around the first query word | Not Kiwix's snippets | Port `MSet::snippet` |
 | No geo search (geo values are written), no multi-archive search, no pre-Glass (Chert) indexes | — | — |
-| The writer holds the full-text index in memory until `finish` | RAM ≈ the index size (1–2 GB for all of English Wikipedia) | Spill sorted runs to disk |
+| The writer keeps an index in memory through `write` | Memory grows with indexed content and vocabulary | Spill sorted runs to disk |
 | Stemmers: `rust-stemmers` (Snowball 2017, identical to Xapian 1.4's English on 237,897 words), which lacks Armenian, Basque, Catalan, Indonesian, Irish, Lithuanian and Nepali | Archives in those 7 languages aren't stemmed, so search matches Kiwix's indexes poorly and Kiwix matches zimfile-written ones poorly | Generate Rust stemmers from Xapian 1.4's Snowball sources |
 
 Older libzim versions (e.g. the one that built the 2024-06 climate archive)

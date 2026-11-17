@@ -1,7 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+#![forbid(unsafe_code)]
+
 use clap::{Parser, Subcommand};
 use serde::Deserialize;
 use std::{
+    borrow::Cow,
     error::Error,
     fs::File,
     io::{self, BufRead, BufReader},
@@ -52,13 +55,15 @@ struct BuildOptions {
 }
 
 #[derive(Deserialize)]
-struct Record {
-    path: String,
-    title: String,
-    #[serde(default)]
-    body: String,
-    #[serde(default)]
-    mimetype: String,
+struct Record<'a> {
+    #[serde(borrow)]
+    path: Cow<'a, str>,
+    #[serde(borrow)]
+    title: Cow<'a, str>,
+    #[serde(borrow, default)]
+    body: Cow<'a, str>,
+    #[serde(borrow, default)]
+    mimetype: Cow<'a, str>,
     language: Option<String>,
     target_path: Option<String>,
 }
@@ -69,11 +74,15 @@ fn build(args: BuildOptions, fulltext: bool) -> Result<(), Box<dyn Error>> {
         .parent()
         .filter(|p| !p.as_os_str().is_empty())
         .unwrap_or(Path::new("."));
-    if args.output.try_exists()? {
-        return Err(format!("output already exists: {}", args.output.display()).into());
+    // A dangling symlink also occupies the destination. persist_noclobber
+    // below repeats the check atomically when publishing a completed file.
+    match args.output.symlink_metadata() {
+        Ok(_) => return Err(format!("output already exists: {}", args.output.display()).into()),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => {}
+        Err(e) => return Err(e.into()),
     }
 
-    let reader: Box<dyn BufRead> = if args.input == Path::new("-") {
+    let mut reader: Box<dyn BufRead> = if args.input == Path::new("-") {
         Box::new(io::stdin().lock())
     } else {
         Box::new(BufReader::new(
@@ -87,12 +96,21 @@ fn build(args: BuildOptions, fulltext: bool) -> Result<(), Box<dyn Error>> {
         IndexWriter::title(&args.language)
     };
     let mut active_language = args.language.clone();
-    for (index, line) in reader.lines().enumerate() {
-        let line = line?;
+    let mut line = String::new();
+    let mut number = 0usize;
+    loop {
+        line.clear();
+        number += 1;
+        if reader
+            .read_line(&mut line)
+            .map_err(|e| format!("input line {number}: {e}"))?
+            == 0
+        {
+            break;
+        }
         if line.trim().is_empty() {
             continue;
         }
-        let number = index + 1;
         let record: Record =
             serde_json::from_str(&line).map_err(|e| format!("input line {number}: {e}"))?;
         let language = record
@@ -114,15 +132,14 @@ fn build(args: BuildOptions, fulltext: bool) -> Result<(), Box<dyn Error>> {
             active_language.clear();
             active_language.push_str(language);
         }
-        if !fulltext {
-            writer
-                .add_title(&record.path, &record.title, target)
-                .map_err(|e| format!("input line {number}: {e}"))?;
+        let indexed = if !fulltext {
+            writer.add_title(&record.path, &record.title, target)
         } else if record.mimetype.starts_with("text/html") {
-            writer.add_html(&record.path, &record.title, &record.body);
+            writer.add_html(&record.path, &record.title, &record.body)
         } else {
-            writer.add_text(&record.path, &record.title, &record.body);
-        }
+            writer.add_text(&record.path, &record.title, &record.body)
+        };
+        indexed.map_err(|e| format!("input line {number}: {e}"))?;
     }
     if writer.is_empty() && args.skip_if_empty {
         return Ok(());

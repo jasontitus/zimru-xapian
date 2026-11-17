@@ -38,7 +38,9 @@ Use `--input -` to stream JSONL. Publication is no-clobber and requires a new ou
 
 The target is libzim's title and full-text schema on single-file Glass, including the standard value slots and full-path document data. The ranking and tokenization baseline is Xapian 1.4. The engine implements the subset of query syntax used by libzim and has limited stemmer coverage. Geo queries, pre-Glass databases, termlist generation and incremental database updates are outside the implemented feature set.
 
-The writer builds one index in memory. Common-term searches can hold and sort a large set of matches even with a low result limit. The verification below uses English archives and a multilingual fixture. Wikipedia-scale indexing performance and exhaustive malformed-input handling have not been established.
+Search streams matching document IDs and retains the best requested results. Broad terms can still require scoring every matching document. A broad title prefix can scan many dictionary terms. When more than 100 terms tie at the expansion cutoff, Rust chooses deterministically by term order and native Xapian may return different suggestions.
+
+The library exposes per-query and per-record limits through `Index::open_with_limits` and `ReaderLimits`. The writer holds one index in memory and reads a complete JSONL record at a time. The measured scale is 50,000 synthetic articles plus two real Kiwix archives. See the [review findings and supported operating limits](AUDIT.md) and [benchmark results](PERFORMANCE.md).
 
 ## Verify
 

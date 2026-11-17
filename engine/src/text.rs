@@ -11,15 +11,18 @@ use icu_properties::props::{GeneralCategory as GC, GeneralCategoryGroup as G};
 
 /// libzim's `removeAccents`: the ICU transform `Lower; NFD; [:M:] remove; NFC`.
 pub fn remove_accents(s: &str) -> String {
+    if s.is_ascii() {
+        return s.to_ascii_lowercase();
+    }
+    // Lowercase the whole input so Greek sigma retains its word context.
+    // Feed decomposition and mark removal directly into NFC. This also
+    // composes Hangul Jamo that become adjacent after stripping a mark.
     let lower = s.to_lowercase();
-    let nfd = DecomposingNormalizerBorrowed::new_nfd().normalize(&lower);
-    let stripped: String = nfd
-        .chars()
-        .filter(|&c| !G::Mark.contains(category(c)))
-        .collect();
+    let decomposed = DecomposingNormalizerBorrowed::new_nfd().normalize_iter(lower.chars());
+    let stripped = decomposed.filter(|&c| !G::Mark.contains(category(c)));
     ComposingNormalizerBorrowed::new_nfc()
-        .normalize(&stripped)
-        .into_owned()
+        .normalize_iter(stripped)
+        .collect()
 }
 
 pub fn category(c: char) -> GC {
@@ -106,6 +109,7 @@ pub fn parse_terms(
     let s: Vec<char> = text.chars().collect();
     let n = s.len();
     let mut i = 0;
+    let mut failed_acronym_end = 0;
     let at = |i: usize| s.get(i).copied();
     'outer: loop {
         // Skip to a word character.
@@ -118,7 +122,7 @@ pub fn parse_terms(
         };
         let mut term = String::new();
         // Acronyms: U.S.A. → usa.
-        if s[i].is_ascii_uppercase() {
+        if i >= failed_acronym_end && s[i].is_ascii_uppercase() {
             let mut p = i;
             loop {
                 term.push(lower(s[p]));
@@ -133,13 +137,16 @@ pub fn parse_terms(
                     break;
                 }
             }
-            if term.chars().count() > 1 && at(p).is_none_or(|c| !is_wordchar(c)) {
+            if term.len() > 1 && at(p).is_none_or(|c| !is_wordchar(c)) {
                 i = p;
                 if !f(&term, with_positions) {
                     return;
                 }
                 continue 'outer;
             }
+            // Suffixes of this uppercase-dot run have the same terminator.
+            // If it failed, lex its words normally without rescanning the run.
+            failed_acronym_end = p;
             term.clear();
         }
         loop {
@@ -150,13 +157,17 @@ pub fn parse_terms(
                     i += 1;
                 }
                 for j in start..i {
-                    let uni: String = s[j..j + 1].iter().collect();
-                    if !f(&uni, with_positions) {
+                    let mut buf = [0; 8];
+                    let bytes = s[j].encode_utf8(&mut buf);
+                    let first_len = bytes.len();
+                    if !f(bytes, with_positions) {
                         return;
                     }
                     if j + 1 < i {
-                        let bi: String = s[j..j + 2].iter().collect();
-                        if !f(&bi, false) {
+                        let second_len = s[j + 1].encode_utf8(&mut buf[first_len..]).len();
+                        let pair = std::str::from_utf8(&buf[..first_len + second_len])
+                            .expect("both characters were encoded as UTF-8");
+                        if !f(pair, false) {
                             return;
                         }
                     }
@@ -281,6 +292,8 @@ mod tests {
     fn accents() {
         assert_eq!(remove_accents("Bêřlïñ Éte"), "berlin ete");
         assert_eq!(remove_accents("Ångström ΣΑΣ"), "angstrom σας");
+        assert_eq!(remove_accents("ᄀ\u{301}ᅡ"), "가");
+        assert_eq!(remove_accents("नमस्ते"), "नमसत");
     }
 
     #[test]
@@ -291,6 +304,7 @@ mod tests {
             ["usa", "and", "us", "are", "nasa"]
         );
         assert_eq!(words("A.b"), ["a", "b"]);
+        assert_eq!(words("A.B.C.Dog U.S.A."), ["a", "b", "c", "dog", "usa"]);
         assert_eq!(words("don't rock&roll l·l"), ["don't", "rock&roll", "l·l"]);
         assert_eq!(words("it\u{2019}s"), ["it's"]);
         assert_eq!(words("1,000.5 a,b"), ["1,000.5", "a", "b"]);

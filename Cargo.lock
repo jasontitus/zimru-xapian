@@ -1198,8 +1198,10 @@ dependencies = [
  "serde_json",
  "tempfile",
  "uuid",
+ "xz2",
  "zimfile-xapian",
  "zimru",
+ "zstd",
 ]
 
 [[package]]

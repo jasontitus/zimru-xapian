@@ -4,7 +4,8 @@
 
 use super::btree::{self, Blocks, Cursor, Root, Source};
 use super::{bitstream, pack};
-use crate::{Error, Result};
+use crate::{Error, ReaderLimits, Result};
+use std::cell::Cell;
 
 pub const MAGIC: &[u8] = b"\x0f\x0dXapian Glass\x04\x6e";
 pub const POSTLIST: usize = 0;
@@ -39,9 +40,6 @@ pub struct Db {
     /// postlist, docdata, termlist, position, spelling, synonym.
     pub roots: [Root; 6],
     pub stats: Stats,
-    // ponytail: every document length in memory (4 bytes/doc) once searched;
-    // read them per document from the doclen list if that's too much.
-    doclens: std::sync::OnceLock<Vec<u32>>,
 }
 
 /// The key of a term's first postlist chunk, or (`did`) of a later one.
@@ -112,7 +110,12 @@ fn add_delta(base: u32, delta: u64) -> Result<u32> {
 }
 
 impl Db {
+    #[cfg(test)]
     pub fn open(src: Box<dyn Source>) -> Result<Db> {
+        Self::open_with_limits(src, ReaderLimits::default())
+    }
+
+    pub fn open_with_limits(src: Box<dyn Source>, limits: ReaderLimits) -> Result<Db> {
         let mut head = vec![0; 256];
         src.read_at(&mut head, 0)?;
         if !head.starts_with(MAGIC) {
@@ -137,6 +140,13 @@ impl Db {
                 compress_min: u32_of(pack::uint(&mut p).ok_or_else(bad)?)?,
                 freelist: pack::string(&mut p).ok_or_else(bad)?.to_vec(),
             };
+            // Xapian supports ten B-tree levels (0 through 9).
+            if r.level >= 10 || (r.fake && r.level != 0) {
+                return Err(corrupt("bad table root level"));
+            }
+            if !(2048..=65536).contains(&r.blocksize) || !r.blocksize.is_power_of_two() {
+                return Err(corrupt("bad table block size"));
+            }
         }
         let mut s = [0u64; 8];
         for v in &mut s {
@@ -151,33 +161,23 @@ impl Db {
             total_doclen: s[6],
         };
         let size = roots[POSTLIST].blocksize as usize;
-        if !(2048..=65536).contains(&size) || !size.is_power_of_two() {
-            return Err(corrupt("bad block size"));
+        if roots
+            .iter()
+            .any(|r| !r.fake && r.blocksize as usize != size)
+        {
+            return Err(corrupt("inconsistent single-file block sizes"));
         }
         Ok(Db {
-            blocks: Blocks::new(src, size),
+            blocks: Blocks::new(src, size, limits),
             uuid,
             revision,
             roots,
             stats,
-            doclens: Default::default(),
         })
     }
 
-    /// Document lengths, indexed by docid (index 0 unused).
-    pub fn doclen_table(&self) -> Result<&[u32]> {
-        if let Some(v) = self.doclens.get() {
-            return Ok(v);
-        }
-        let mut v = vec![0; self.stats.last_docid as usize + 1];
-        if let Some(mut pl) = self.doclens()? {
-            while pl.next()? {
-                if let Some(x) = v.get_mut(pl.did() as usize) {
-                    *x = pl.wdf();
-                }
-            }
-        }
-        Ok(self.doclens.get_or_init(|| v))
+    pub fn limits(&self) -> ReaderLimits {
+        self.blocks.limits
     }
 
     #[cfg(test)]
@@ -217,13 +217,23 @@ impl Db {
     }
 
     /// The term's postings, `None` if absent.
+    #[cfg(test)]
     pub fn postlist(&self, term: &[u8]) -> Result<Option<PostList<'_>>> {
-        PostList::open(self, term)
+        PostList::open(self, term, None)
+    }
+
+    pub fn budgeted_postlist<'a>(
+        &'a self,
+        term: &[u8],
+        budget: &'a PostingBudget,
+    ) -> Result<Option<PostList<'a>>> {
+        PostList::open(self, term, Some(budget))
     }
 
     /// Every document's length, in docid order.
+    #[cfg(test)]
     pub fn doclens(&self) -> Result<Option<PostList<'_>>> {
-        PostList::open(self, b"")
+        self.postlist(b"")
     }
 
     /// Value `slot` of `did` (empty values aren't stored: `None`).
@@ -264,22 +274,21 @@ impl Db {
     pub fn positions(&self, did: u32, term: &[u8]) -> Result<Vec<u32>> {
         match self.get(POSITION, &position_key(term, did))? {
             None => Ok(vec![]),
-            Some(t) => bitstream::decode(&t)
-                .ok_or_else(|| corrupt("bad position list"))?
-                .into_iter()
-                .map(u32_of)
-                .collect(),
+            Some(t) => bitstream::decode(&t, self.blocks.limits.max_positions),
         }
     }
 
     /// Terms starting with `prefix`, in byte order, with their term
     /// frequencies.
-    pub fn terms(&self, prefix: &[u8]) -> Result<Vec<(Vec<u8>, u32)>> {
+    pub fn visit_terms(
+        &self,
+        prefix: &[u8],
+        mut visit: impl FnMut(Vec<u8>, u32) -> Result<()>,
+    ) -> Result<()> {
         let mut start = vec![];
         pack::put_sort_string(&mut start, prefix, true);
-        let mut out = vec![];
         let Some(mut c) = Cursor::seek_ge(&self.blocks, &self.roots[POSTLIST], &start)? else {
-            return Ok(out);
+            return Ok(());
         };
         while let Some(k) = c.key()?
             && k.starts_with(&start)
@@ -287,12 +296,22 @@ impl Db {
             if let Some(t) = term_of(k) {
                 let tag = c.tag()?;
                 let tf = pack::uint(&mut &tag[..]).ok_or_else(bad)?;
-                out.push((t, u32_of(tf)?));
+                visit(t, u32_of(tf)?)?;
             }
             if !c.next()? {
                 break;
             }
         }
+        Ok(())
+    }
+
+    #[cfg(test)]
+    pub fn terms(&self, prefix: &[u8]) -> Result<Vec<(Vec<u8>, u32)>> {
+        let mut out = Vec::new();
+        self.visit_terms(prefix, |term, count| {
+            out.push((term, count));
+            Ok(())
+        })?;
         Ok(out)
     }
 }
@@ -301,9 +320,24 @@ impl Db {
 #[cfg(test)]
 pub type ValueStats = (u32, Vec<u8>, Vec<u8>);
 
+/// Shared by this query's forward-only cursors. Capacity is returned when
+/// a cursor changes chunks, reaches its end, or is dropped early.
+pub struct PostingBudget {
+    remaining: Cell<usize>,
+}
+
+impl PostingBudget {
+    pub fn new(bytes: usize) -> Self {
+        Self {
+            remaining: Cell::new(bytes),
+        }
+    }
+}
+
 /// A posting list (term or doclen), read one chunk at a time.
 pub struct PostList<'a> {
     db: &'a Db,
+    budget: Option<&'a PostingBudget>,
     term: Vec<u8>,
     /// Term frequency and collection frequency (0 for doclens).
     pub tf: u32,
@@ -319,12 +353,21 @@ pub struct PostList<'a> {
 }
 
 impl<'a> PostList<'a> {
-    fn open(db: &'a Db, term: &[u8]) -> Result<Option<PostList<'a>>> {
-        let Some(tag) = db.get(POSTLIST, &postlist_key(term, None))? else {
+    fn open(
+        db: &'a Db,
+        term: &[u8],
+        budget: Option<&'a PostingBudget>,
+    ) -> Result<Option<PostList<'a>>> {
+        let key = postlist_key(term, None);
+        let Some(cursor) = Cursor::seek_le(&db.blocks, &db.roots[POSTLIST], &key)? else {
             return Ok(None);
         };
+        if cursor.key()? != Some(&key) {
+            return Ok(None);
+        }
         let mut pl = PostList {
             db,
+            budget,
             term: term.to_vec(),
             tf: 0,
             cf: 0,
@@ -337,13 +380,43 @@ impl<'a> PostList<'a> {
             started: false,
             ended: false,
         };
+        let tag = pl.read_tag(&cursor)?;
+        pl.load_first(tag)?;
+        Ok(Some(pl))
+    }
+
+    fn release_chunk(&mut self) {
+        if let Some(budget) = self.budget {
+            budget
+                .remaining
+                .set(budget.remaining.get() + self.chunk.capacity());
+        }
+        self.chunk = Vec::new();
+    }
+
+    fn read_tag(&mut self, cursor: &Cursor) -> Result<Vec<u8>> {
+        self.release_chunk();
+        let Some(budget) = self.budget else {
+            return cursor.tag();
+        };
+        let remaining = budget.remaining.get();
+        cursor.tag_limited(remaining).map_err(|e| match e {
+            Error::Invalid(message) if remaining < self.db.limits().max_tag_bytes => {
+                Error::Invalid(format!(
+                    "{message} (remaining posting budget: {remaining} bytes)"
+                ))
+            }
+            other => other,
+        })
+    }
+
+    fn load_first(&mut self, tag: Vec<u8>) -> Result<()> {
         let mut p = &tag[..];
-        pl.tf = u32_of(pack::uint(&mut p).ok_or_else(bad)?)?;
-        pl.cf = pack::uint(&mut p).ok_or_else(bad)?;
+        self.tf = u32_of(pack::uint(&mut p).ok_or_else(bad)?)?;
+        self.cf = pack::uint(&mut p).ok_or_else(bad)?;
         let first = add_delta(1, pack::uint(&mut p).ok_or_else(bad)?)?;
         let used = tag.len() - p.len();
-        pl.load(tag, used, first)?;
-        Ok(Some(pl))
+        self.load(tag, used, first)
     }
 
     /// Start reading chunk `tag` at `at` (`is_last`, `last − first`, then
@@ -358,6 +431,14 @@ impl<'a> PostList<'a> {
         self.did = first;
         self.wdf = u32_of(pack::uint(&mut p).ok_or_else(bad)?)?;
         self.pos = tag.len() - p.len();
+        if let Some(budget) = self.budget {
+            let rest = budget
+                .remaining
+                .get()
+                .checked_sub(tag.capacity())
+                .ok_or_else(|| Error::Invalid("posting cursor memory limit exceeded".into()))?;
+            budget.remaining.set(rest);
+        }
         self.chunk = tag;
         Ok(())
     }
@@ -368,19 +449,18 @@ impl<'a> PostList<'a> {
         let prefix = postlist_key(&self.term, Some(0));
         let prefix = &prefix[..prefix.len() - 2];
         if k == postlist_key(&self.term, None) {
-            // The first chunk again: reopen.
-            let fresh = PostList::open(self.db, &self.term)?.ok_or_else(bad)?;
-            *self = PostList {
-                started: true,
-                ..fresh
-            };
+            let tag = self.read_tag(c)?;
+            self.load_first(tag)?;
             return Ok(true);
         }
         let Some(mut p) = k.strip_prefix(prefix) else {
             return Ok(false);
         };
         let first = u32_of(pack::pus(&mut p).ok_or_else(bad)?)?;
-        let tag = c.tag()?;
+        if !p.is_empty() {
+            return Err(bad());
+        }
+        let tag = self.read_tag(c)?;
         self.load(tag, 0, first)?;
         Ok(true)
     }
@@ -417,6 +497,7 @@ impl<'a> PostList<'a> {
             return Err(corrupt("posting chunk ended before its last document"));
         }
         if self.is_last_chunk {
+            self.release_chunk();
             self.ended = true;
             return Ok(false);
         }
@@ -457,5 +538,49 @@ impl<'a> PostList<'a> {
             }
         }
         Ok(true)
+    }
+}
+
+impl Drop for PostList<'_> {
+    fn drop(&mut self) {
+        self.release_chunk();
+    }
+}
+
+#[cfg(test)]
+mod budget_tests {
+    use super::*;
+    use crate::IndexWriter;
+
+    #[test]
+    fn live_posting_chunks_share_and_return_the_query_budget() {
+        let mut writer = IndexWriter::fulltext("eng");
+        for did in 1..=1400 {
+            writer.add_text(&did.to_string(), "", "alpha beta").unwrap();
+        }
+        let mut cursor = std::io::Cursor::new(Vec::new());
+        writer.write(&mut cursor, [0; 16]).unwrap();
+        let db = Db::open(Box::new(cursor.into_inner())).unwrap();
+        let first_size = db.postlist(b"alpha").unwrap().unwrap().chunk.capacity();
+        let budget = PostingBudget::new(first_size);
+        let mut alpha = db.budgeted_postlist(b"alpha", &budget).unwrap().unwrap();
+        assert_eq!(budget.remaining.get(), 0);
+        assert!(matches!(
+            db.budgeted_postlist(b"beta", &budget),
+            Err(Error::Invalid(_))
+        ));
+        assert_eq!(budget.remaining.get(), 0);
+        let mut count = 0;
+        while alpha.next().unwrap() {
+            count += 1;
+        }
+        assert_eq!(count, 1400);
+        assert_eq!(budget.remaining.get(), first_size);
+        let beta = db.budgeted_postlist(b"beta", &budget).unwrap().unwrap();
+        assert_eq!(budget.remaining.get(), 0);
+        drop(beta);
+        assert_eq!(budget.remaining.get(), first_size);
+        drop(alpha);
+        assert_eq!(budget.remaining.get(), first_size);
     }
 }

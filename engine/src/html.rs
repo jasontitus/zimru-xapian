@@ -5,6 +5,8 @@
 //! `writer/defaultIndexData.h` calls it: `parse_html(text, "UTF-8", true)`,
 //! exceptions swallowed. Works on bytes like the C++.
 
+use std::borrow::Cow;
+
 pub(crate) struct Html {
     pub dump: String,
     #[allow(dead_code)] // parsed as libzim does; libzim doesn't use it either
@@ -17,10 +19,6 @@ pub(crate) struct Html {
 
 pub(crate) fn parse(html: &str) -> Html {
     let mut p = Parser {
-        params: Vec::new(),
-        in_script: false,
-        in_script_tag: false,
-        in_style_tag: false,
         pending_space: false,
         indexing_allowed: true,
         title: Vec::new(),
@@ -42,12 +40,6 @@ pub(crate) fn parse(html: &str) -> Html {
 }
 
 struct Parser {
-    /// Attributes of the current opening tag; the first of a name wins.
-    params: Vec<(Vec<u8>, Vec<u8>)>,
-    /// HtmlParser's flag: inside <script>, `<` + letter isn't a tag.
-    in_script: bool,
-    in_script_tag: bool,
-    in_style_tag: bool,
     pending_space: bool,
     indexing_allowed: bool,
     title: Vec<u8>,
@@ -85,19 +77,25 @@ fn lower(s: &[u8]) -> Vec<u8> {
 }
 
 impl Parser {
-    fn param(&self, name: &[u8]) -> Option<Vec<u8>> {
-        self.params
-            .iter()
-            .find(|(n, _)| n == name)
-            .map(|(_, v)| v.clone())
-    }
-
     /// HtmlParser::parse_html. Returning early is the C++ `break` or a
     /// swallowed `throw`.
     fn parse_html(&mut self, b: &[u8]) {
         let n = b.len();
         let mut start = 0;
+        let mut raw_tag: Option<&[u8]> = None;
+        let mut no_comment_end = false;
         loop {
+            if let Some(tag) = raw_tag.take() {
+                // JavaScript and CSS can contain markup-looking strings.
+                // Resume at the matching end tag, including mixed-case names.
+                let close = b[start..].windows(tag.len() + 3).position(|w| {
+                    w.starts_with(b"</")
+                        && w[2..2 + tag.len()].eq_ignore_ascii_case(tag)
+                        && (is_space(w[2 + tag.len()]) || matches!(w[2 + tag.len()], b'/' | b'>'))
+                });
+                let Some(close) = close else { return };
+                start += close;
+            }
             // Skip to a tag, comment, or the end; ignore isolated `<`.
             let mut p = start;
             loop {
@@ -108,8 +106,7 @@ impl Parser {
                 let ch = at(b, p + 1);
                 // `<?` always breaks: every path of the XML-declaration
                 // sniffing does, and the charset it finds is unused.
-                if (!self.in_script && ch.is_ascii_alphabetic()) || matches!(ch, b'/' | b'!' | b'?')
-                {
+                if ch.is_ascii_alphabetic() || matches!(ch, b'/' | b'!' | b'?') {
                     break;
                 }
                 p += 1;
@@ -139,7 +136,7 @@ impl Parser {
                     if close == n {
                         return;
                     }
-                    p = close;
+                    p = if no_comment_end { n } else { close };
                     while p != n && (b[p - 1] != b'-' || b[p - 2] != b'-') {
                         p = find(b, p + 1, |c| c == b'>');
                     }
@@ -155,6 +152,7 @@ impl Parser {
                         start = p;
                     } else {
                         // No `-->`: skip to the first `>`, as Netscape does.
+                        no_comment_end = true;
                         start = close;
                     }
                 } else {
@@ -192,9 +190,6 @@ impl Parser {
                     if self.closing_tag(&tag) {
                         return;
                     }
-                    if self.in_script && tag == b"script" {
-                        self.in_script = false;
-                    }
                     // Ignore any bogus parameters on closing tags.
                     p = find(b, start, |c| c == b'>');
                     if p == n {
@@ -202,6 +197,10 @@ impl Parser {
                     }
                     start = p + 1;
                 } else {
+                    // Only meta name/content affect extracted text. Keep slices
+                    // of the first values, matching the native parameter map.
+                    let mut meta_name = None;
+                    let mut meta_content = None;
                     while start < n && b[start] != b'>' {
                         p = find(b, start, |c| is_space(c) || c == b'=' || c == b'>');
                         let name = &b[start..p];
@@ -219,23 +218,28 @@ impl Parser {
                                 // Unquoted, or no closing quote.
                                 p = find(b, start, |c| is_space(c) || c == b'>');
                             }
-                            let value = b[start..p].to_vec();
+                            let value = &b[start..p];
                             start = find(b, p, |c| !is_space(c));
-                            if !name.is_empty() {
-                                let name = lower(name);
-                                if !self.params.iter().any(|(k, _)| *k == name) {
-                                    self.params.push((name, value));
+                            if tag == b"meta" {
+                                if name.eq_ignore_ascii_case(b"name") {
+                                    meta_name.get_or_insert(value);
+                                } else if name.eq_ignore_ascii_case(b"content") {
+                                    meta_content.get_or_insert(value);
                                 }
                             }
                         }
                     }
-                    if self.opening_tag(&tag) {
-                        return;
-                    }
-                    self.params.clear();
-                    // In <script> ignore opening tags, to survive "a<b".
-                    if tag == b"script" {
-                        self.in_script = true;
+                    match tag.as_slice() {
+                        b"script" => raw_tag = Some(b"script"),
+                        b"style" => raw_tag = Some(b"style"),
+                        b"meta" => {
+                            if let (Some(name), Some(content)) = (meta_name, meta_content)
+                                && self.meta(name, content)
+                            {
+                                return;
+                            }
+                        }
+                        _ => self.opening_tag(&tag),
                     }
                     if start != n && b[start] == b'>' {
                         start += 1;
@@ -247,7 +251,7 @@ impl Parser {
 
     /// MyHtmlParser::process_text: collapse runs of " \t\n\r" to one space.
     fn process_text(&mut self, text: &[u8]) {
-        if text.is_empty() || self.in_script_tag || self.in_style_tag {
+        if text.is_empty() {
             return;
         }
         let n = text.len();
@@ -269,13 +273,9 @@ impl Parser {
         }
     }
 
-    /// MyHtmlParser::opening_tag. Returns true where the C++ throws.
-    fn opening_tag(&mut self, tag: &[u8]) -> bool {
+    fn opening_tag(&mut self, tag: &[u8]) {
         match tag {
             b"body" => self.dump.clear(),
-            b"style" => self.in_style_tag = true,
-            b"script" => self.in_script_tag = true,
-            b"meta" => return self.meta(),
             b"address" | b"blockquote" | b"br" | b"center" | b"dd" | b"dir" | b"div" | b"dl"
             | b"dt" | b"embed" | b"fieldset" | b"form" | b"hr" | b"h1" | b"h2" | b"h3" | b"h4"
             | b"h5" | b"h6" | b"iframe" | b"img" | b"isindex" | b"input" | b"keygen"
@@ -284,15 +284,12 @@ impl Parser {
             | b"textarea" | b"th" | b"ul" | b"xmp" => self.pending_space = true,
             _ => {}
         }
-        false
     }
 
     /// MyHtmlParser::closing_tag. Returns true where the C++ throws.
     fn closing_tag(&mut self, tag: &[u8]) -> bool {
         match tag {
             b"body" => return true,
-            b"style" => self.in_style_tag = false,
-            b"script" => self.in_script_tag = false,
             b"title" => {
                 if self.title.is_empty() {
                     std::mem::swap(&mut self.title, &mut self.dump);
@@ -310,19 +307,16 @@ impl Parser {
 
     /// `<meta name=... content=...>`. The description (C++ `sample`) is
     /// unused by libzim, and charset metas are ignored (charset_from_meta).
-    fn meta(&mut self) -> bool {
-        let (Some(content), Some(name)) = (self.param(b"content"), self.param(b"name")) else {
-            return false;
-        };
-        match &lower(&name)[..] {
+    fn meta(&mut self, name: &[u8], content: &[u8]) -> bool {
+        match &lower(name)[..] {
             b"keywords" => {
                 if !self.keywords.is_empty() {
                     self.keywords.push(b' ');
                 }
-                self.keywords.extend(decode_entities(&content));
+                self.keywords.extend_from_slice(&decode_entities(content));
             }
             b"robots" => {
-                let c = lower(&decode_entities(&content));
+                let c = lower(&decode_entities(content));
                 let has = |w: &[u8]| c.windows(w.len()).any(|x| x == w);
                 if has(b"none") || has(b"noindex") {
                     self.indexing_allowed = false;
@@ -330,7 +324,7 @@ impl Parser {
                 }
             }
             b"geo.position" => {
-                if let Some((lat, lon)) = coordinates(&content) {
+                if let Some((lat, lon)) = coordinates(content) {
                     self.geo = Some((lat, lon));
                 }
             }
@@ -355,39 +349,39 @@ fn coordinates(content: &[u8]) -> Option<(f64, f64)> {
 
 /// HtmlParser::decode_entities: named (case-sensitive, `;` optional),
 /// decimal and hex entities; unknown ones are left as they are.
-fn decode_entities(s: &[u8]) -> Vec<u8> {
+fn decode_entities(s: &[u8]) -> Cow<'_, [u8]> {
+    let Some(first) = s.iter().position(|&b| b == b'&') else {
+        return Cow::Borrowed(s);
+    };
     let n = s.len();
     let mut out = Vec::with_capacity(n);
-    let mut i = 0;
+    out.extend_from_slice(&s[..first]);
+    let mut i = first;
     loop {
         let amp = find(s, i, |c| c == b'&');
         out.extend_from_slice(&s[i..amp]);
         if amp == n {
-            return out;
+            return Cow::Owned(out);
         }
         let mut p = amp + 1;
         let mut end;
         let mut val: u32 = 0;
         if at(s, p) == b'#' {
             p += 1;
-            if matches!(at(s, p), b'x' | b'X') {
+            let hex = matches!(at(s, p), b'x' | b'X');
+            if hex {
                 p += 1;
-                end = find(s, p, |c| !c.is_ascii_hexdigit());
-                // sscanf("%x"): strtoul saturating at ULONG_MAX, truncated.
-                let d = std::str::from_utf8(&s[p..end]).unwrap();
-                if !d.is_empty() {
-                    val = u64::from_str_radix(d, 16).unwrap_or(u64::MAX) as u32;
-                }
-            } else {
-                end = find(s, p, |c| !c.is_ascii_digit());
-                // atoi: (int)strtol, saturating at LONG_MAX, truncated.
-                let d = std::str::from_utf8(&s[p..end]).unwrap();
-                if !d.is_empty() {
-                    val = d
-                        .parse::<u64>()
-                        .map_or(i64::MAX as u64, |v| v.min(i64::MAX as u64))
-                        as u32;
-                }
+            }
+            end = find(s, p, |c| {
+                !(if hex {
+                    c.is_ascii_hexdigit()
+                } else {
+                    c.is_ascii_digit()
+                })
+            });
+            if end > p {
+                let digits = std::str::from_utf8(&s[p..end]).expect("ASCII digits");
+                val = u32::from_str_radix(digits, if hex { 16 } else { 10 }).unwrap_or(u32::MAX);
             }
         } else {
             end = find(s, p, |c| !c.is_ascii_alphanumeric());
@@ -401,28 +395,11 @@ fn decode_entities(s: &[u8]) -> Vec<u8> {
         i = end;
         if val == 0 {
             out.extend_from_slice(&s[amp..end]);
-        } else if !utf8(val, &mut out) && end < n {
-            // Nothing was inserted, and the C++ resumes its search one byte
-            // past the entity's position, so the next byte is taken as is.
-            out.push(s[end]);
-            i = end + 1;
+        } else {
+            let scalar = char::from_u32(val).unwrap_or(char::REPLACEMENT_CHARACTER);
+            out.extend_from_slice(scalar.encode_utf8(&mut [0; 4]).as_bytes());
         }
     }
-}
-
-/// Append `val` as `char(val)` or Xapian's `nonascii_to_utf8`, which encodes
-/// anything below 0x200000 (surrogates too) and drops the rest. Returns
-/// whether it appended anything.
-fn utf8(val: u32, out: &mut Vec<u8>) -> bool {
-    let c = |shift: u32| 0x80 | ((val >> shift) & 0x3f) as u8;
-    match val {
-        0..0x80 => out.push(val as u8),
-        0x80..0x800 => out.extend([0xc0 | (val >> 6) as u8, c(0)]),
-        0x800..0x10000 => out.extend([0xe0 | (val >> 12) as u8, c(6), c(0)]),
-        0x10000..0x200000 => out.extend([0xf0 | (val >> 18) as u8, c(12), c(6), c(0)]),
-        _ => return false,
-    }
-    true
 }
 
 /// namedentities.h: HTML 4's character entities, plus `apos`.
@@ -526,8 +503,19 @@ mod tests {
     fn script_style_and_comments() {
         assert_eq!(dump("a<script>if (a<b) x</script>b"), "ab");
         assert_eq!(dump("a<style>p{}</style> b"), "a b");
-        // </div> inside a script is still a tag, and still sets a space.
-        assert_eq!(dump("a<script>x</div>y</script>b"), "a b");
+        assert_eq!(dump("a<script>x</div>y</script>b"), "ab");
+        assert_eq!(
+            dump(r#"<body>before<script>html="</body>"</sCrIpT>after"#),
+            "beforeafter"
+        );
+        assert_eq!(
+            dump(r#"a<style>x{content:"<meta name=robots content=noindex>"}</STYLE >b"#),
+            "ab"
+        );
+        assert_eq!(
+            dump("<script>before</scripty>middle</script>after"),
+            "after"
+        );
         assert_eq!(dump("a<!-- c -->b<!DOCTYPE html>c<?php x ?>d"), "abcd");
         assert_eq!(dump("a<!--htdig_noindex-->x<!--/htdig_noindex-->b"), "ab");
         assert_eq!(dump("a<!--htdig_noindex-->x"), "a");
@@ -547,6 +535,12 @@ mod tests {
         assert_eq!(h.dump, ""); // parsing stops at the robots meta
         assert!(!parse(r#"<meta content="none" name="robots">"#).indexing_allowed);
         assert!(parse(r#"<meta name="robots" content="index">"#).indexing_allowed);
+        let duplicated = parse(
+            r#"<Meta NAME=keywords name=robots content="First &amp; only" CONTENT=noindex>visible"#,
+        );
+        assert!(duplicated.indexing_allowed);
+        assert_eq!(duplicated.keywords, "First & only");
+        assert_eq!(duplicated.dump, "visible");
         for value in [
             "x;2",
             "2;3 trailing",
@@ -580,8 +574,10 @@ mod tests {
         );
         // Decoded whitespace collapses like literal whitespace.
         assert_eq!(dump("a&#10;&#32;b"), "a b");
-        // Out of range: removed, and the byte after it skipped by the search.
-        assert_eq!(dump("a&#x300000;&amp;"), "a&amp;");
+        // Use the native builder's Unicode scalar replacement semantics.
+        assert_eq!(dump("a&#x300000;&amp;"), "a�&");
+        assert_eq!(dump("&#xD800;&#x10ffff;&#0;"), "�\u{10ffff}&#0;");
+        assert_eq!(dump("&#4294967361;"), "�");
     }
 
     /// libzim's `countWords`: runs of non-`isspace` bytes.
