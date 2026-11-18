@@ -4,16 +4,16 @@ Two standalone GPL-3.0-or-later command-line tools for ZIM search indexes. `zims
 
 ## Build and search
 
-This review branch builds against the adjacent MIT `zimru` source tree at `cc5abe126f2884047e73c076ff5632da362c2167`. Clone the two branches of the private repository into sibling directories. The MIT branch retains its own history and license. Use a current stable Rust toolchain, a C toolchain and liblzma development files.
+This review branch builds against the adjacent MIT `zimru` source tree at `96447aca7d67e16c6608c02ac42832875088bb4a`. Clone the two branches of the private repository into sibling directories. The MIT branch retains its own history and license. Use a current stable Rust toolchain, a C toolchain and liblzma development files.
 
 ```sh
 git clone -b review/zimru-memory-safety https://github.com/jasontitus/zimru-xapian.git zimru
-git -C zimru checkout --detach cc5abe126f2884047e73c076ff5632da362c2167
+git -C zimru checkout --detach 96447aca7d67e16c6608c02ac42832875088bb4a
 git clone -b review/zimru-storage https://github.com/jasontitus/zimru-xapian.git zimru-xapian
 cd zimru-xapian
 ```
 
-Ordinary archive and Glass reads use positioned I/O on a single original source file. Compressed fallback language metadata uses the MIT reader's guarded interface. Native Zstd and liblzma are still present through that library. [Memory-safety review](https://github.com/jasontitus/zimru-xapian/blob/cc5abe126f2884047e73c076ff5632da362c2167/docs/memory-safety-review.md)
+Ordinary archive and Glass reads use positioned I/O on a single original source file. Compressed fallback language metadata uses the MIT reader's guarded interface. Native Zstd and liblzma are still present through that library. [Memory-safety review](https://github.com/jasontitus/zimru-xapian/blob/96447aca7d67e16c6608c02ac42832875088bb4a/docs/memory-safety-review.md)
 
 ```sh
 cargo build --release --locked
