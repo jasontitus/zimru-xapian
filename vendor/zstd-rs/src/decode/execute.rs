@@ -71,7 +71,8 @@ impl<'a> Exec<'a> {
         }
         let (p, lp) = (self.pos, self.lit_pos);
         if ll <= 16 && lp + 16 <= lits.len() && self.buf.len() - p >= 16 {
-            self.buf[p..p + 16].copy_from_slice(&lits[lp..lp + 16]);
+            let bytes = *lits[lp..].first_chunk::<16>().unwrap();
+            *self.buf[p..].first_chunk_mut::<16>().unwrap() = bytes;
         } else {
             self.buf[p..p + ll].copy_from_slice(&lits[lp..lit_end]);
         }
@@ -137,15 +138,19 @@ fn copy_match(buf: &mut [u8], pos: usize, offset: usize, len: usize) {
             done += count;
         }
     } else if offset >= 16 {
+        // Load each lane by value before writing it. Later lanes may read
+        // the bytes we just produced when the full match overlaps itself.
         let mut i = 0;
         while i < len {
-            buf.copy_within(src + i..src + i + 16, pos + i);
+            let bytes = *buf[src + i..].first_chunk::<16>().unwrap();
+            *buf[pos + i..].first_chunk_mut::<16>().unwrap() = bytes;
             i += 16;
         }
     } else if offset >= 8 {
         let mut i = 0;
         while i < len {
-            buf.copy_within(src + i..src + i + 8, pos + i);
+            let bytes = *buf[src + i..].first_chunk::<8>().unwrap();
+            *buf[pos + i..].first_chunk_mut::<8>().unwrap() = bytes;
             i += 8;
         }
     } else {
@@ -158,7 +163,8 @@ fn copy_match(buf: &mut [u8], pos: usize, offset: usize, len: usize) {
         let d = offset * 8usize.div_ceil(offset);
         let mut i = 8;
         while i < len {
-            buf.copy_within(pos + i - d..pos + i - d + 8, pos + i);
+            let bytes = *buf[pos + i - d..].first_chunk::<8>().unwrap();
+            *buf[pos + i..].first_chunk_mut::<8>().unwrap() = bytes;
             i += 8;
         }
     }
@@ -178,6 +184,25 @@ mod tests {
         let end = ex.pos;
         buf.truncate(end);
         Ok(buf)
+    }
+
+    #[test]
+    fn match_copies_agree_with_bytewise_expansion_at_slack_boundary() {
+        let prefix: Vec<u8> = (0..73).map(|i| (i * 47) as u8).collect();
+        for offset in 1..=prefix.len() {
+            for len in [1, 3, 7, 8, 9, 15, 16, 17, 31, 32, 33, 63, 64, 65, 129] {
+                let mut expected = prefix.clone();
+                for _ in 0..len {
+                    expected.push(expected[expected.len() - offset]);
+                }
+                for spare in [0, SLACK - 1, SLACK, SLACK + 1] {
+                    let mut buf = prefix.clone();
+                    buf.resize(expected.len() + spare, 0xac);
+                    copy_match(&mut buf, prefix.len(), offset, len);
+                    assert_eq!(&buf[..expected.len()], expected, "offset={offset}, len={len}, spare={spare}");
+                }
+            }
+        }
     }
 
     #[test]
