@@ -51,6 +51,7 @@ pub fn collect(
     ll0: bool,
     min: usize,
     chain: &Chain,
+    use_tree: bool,
     h3: Option<&mut [u32]>,
     out: &mut Vec<Cand>,
 ) {
@@ -82,6 +83,10 @@ pub fn collect(
                 out.push(Cand { off: (ip - m) as u32, len: n as u32 });
             }
         }
+    }
+    if use_tree {
+        super::tree::collect(t, b, ip, chain, best, out);
+        return;
     }
     search(t, b, ip, chain, best, |len, off| {
         if out.last().is_some_and(|c| c.len as usize == len) {

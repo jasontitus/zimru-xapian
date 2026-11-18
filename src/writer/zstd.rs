@@ -160,6 +160,8 @@ impl<W: Write> Encoder<W> {
             // level-3 matcher would discard history older than 2 MiB.
             if self.use_frame_window {
                 worker.codec.compress_job_with_frame_window(bytes, &job, &mut worker.encoded)
+            } else if cfg!(feature = "experimental-zstd-tree") && worker.codec.config().level == 19 {
+                worker.codec.compress_job_with_tree(bytes, &job, &mut worker.encoded)
             } else {
                 worker.codec.compress_job(bytes, &job, None, &mut worker.encoded)
             }

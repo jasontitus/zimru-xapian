@@ -22,6 +22,8 @@ default = ["writer"]
 # `zimrecreate` / `zimwriterfs` binaries. With default features disabled
 # the crate is reader-only. miniz_oxide backs `zimwriterfs -x/--inflateHtml`.
 writer = ["dep:miniz_oxide", "lzma-rust2/encoder", "dep:parking_lot"]
+# Opt in to the level-19 Zstandard tree matcher for archive writing.
+experimental-zstd-tree = ["writer"]
 # Compile the `extern "C"` API surface (`zimru::cffi`) and emit the
 # generated `include/zimru.h` from build.rs. Required when consuming
 # zimru as a `cdylib` / `staticlib` from C, C++, or other FFI callers.

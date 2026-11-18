@@ -1,6 +1,7 @@
 //! Optimal parsing (btopt / btultra / btultra2 levels): a forward price DP over
 //! match candidates with per-node repeat-offset history, then backtracking.
 mod matches;
+mod tree;
 pub mod price;
 
 use super::hc::Chain;
@@ -35,17 +36,19 @@ pub struct OptState {
     h3: Vec<u32>,
     /// True until the first block of the current frame has been parsed.
     pub first_block: bool,
+    pub use_tree: bool,
 }
 
 impl OptState {
     pub fn new() -> OptState {
-        OptState { stats: Stats::new(), nodes: vec![EMPTY; OPT_NUM + 8], cands: Vec::new(), h3: Vec::new(), first_block: true }
+        OptState { stats: Stats::new(), nodes: Vec::new(), cands: Vec::new(), h3: Vec::new(), first_block: true, use_tree: false }
     }
 }
 
 /// Parses one block with the optimal parser. `dict` supplies initial statistics.
 pub fn parse(t: &mut Tables, b: &BlockInput<'_>, p: &CParams, store: &mut SeqStore, st: &mut OptState, dict: Option<&DictCTables>) {
     let ultra = p.strategy >= Strategy::BtUltra;
+    if st.nodes.is_empty() { st.nodes.resize(OPT_NUM + 8, EMPTY); }
     let first = st.first_block;
     st.first_block = false;
     st.stats.rescale(&b.src[b.start..b.end], first, dict, ultra);
@@ -90,7 +93,7 @@ fn run(t: &mut Tables, b: &BlockInput<'_>, p: &CParams, store: &mut SeqStore, st
     while ip < ilimit {
         let litlen = (ip - anchor) as u32;
         let reps = store.reps;
-        collect(t, b, ip, &reps, litlen == 0, min, &chain, h3.as_deref_mut(), cands);
+        collect(t, b, ip, &reps, litlen == 0, min, &chain, st.use_tree, h3.as_deref_mut(), cands);
         let Some(&longest) = cands.last() else {
             ip += 1;
             continue;
@@ -128,7 +131,7 @@ fn run(t: &mut Tables, b: &BlockInput<'_>, p: &CParams, store: &mut SeqStore, st
                 continue;
             }
             let here = nodes[cur];
-            collect(t, b, inr, &here.reps, here.litlen == 0, min, &chain, h3.as_deref_mut(), cands);
+            collect(t, b, inr, &here.reps, here.litlen == 0, min, &chain, st.use_tree, h3.as_deref_mut(), cands);
             if let Some(&lg) = cands.last() {
                 if lg.len as usize > sufficient || cur + lg.len as usize >= OPT_NUM || inr + lg.len as usize >= b.end {
                     stretch = Some((cur, lg));

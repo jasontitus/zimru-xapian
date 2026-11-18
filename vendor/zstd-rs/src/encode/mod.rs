@@ -75,6 +75,13 @@ pub(crate) struct Workspace {
     pub reps: Reps,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum JobMode {
+    Standard,
+    FrameWindow,
+    ArchiveTree,
+}
+
 /// A reusable compression context bound to one configuration.
 pub struct Compressor {
     cfg: CompressionConfig,
@@ -110,7 +117,7 @@ impl Compressor {
         let p = self.frame_params(src.len(), dict)?;
         write_header(&self.cfg, &p, src.len(), dict, out);
         let whole = Job { start: 0, end: src.len(), prefix_start: 0, first: true, last: true };
-        self.blocks(src, &whole, dict, &p, out)?;
+        self.blocks(src, &whole, dict, &p, false, out)?;
         write_checksum(&self.cfg, src, out);
         Ok(())
     }
@@ -119,7 +126,7 @@ impl Compressor {
     /// without the frame header or checksum. The output depends only on
     /// (`self.config()`, `src`, `job`, `dict`), never on which context runs it.
     pub fn compress_job(&mut self, src: &[u8], job: &Job, dict: Option<&EncoderDictionary>, out: &mut Vec<u8>) -> Result<()> {
-        self.job_blocks(src, job, dict, false, out)
+        self.job_blocks(src, job, dict, JobMode::Standard, out)
     }
 
     /// Encode independent, dictionary-free blocks for a frame whose header was
@@ -128,20 +135,27 @@ impl Compressor {
     /// the entire input. The ordinary frame and parallel APIs derive their own
     /// window from the compression level.
     pub fn compress_job_with_frame_window(&mut self, src: &[u8], job: &Job, out: &mut Vec<u8>) -> Result<()> {
-        self.job_blocks(src, job, None, true, out)
+        self.job_blocks(src, job, None, JobMode::FrameWindow, out)
     }
 
-    fn job_blocks(&mut self, src: &[u8], job: &Job, dict: Option<&EncoderDictionary>, use_frame_window: bool, out: &mut Vec<u8>) -> Result<()> {
+    /// Encode dictionary-free blocks for an externally assembled frame. Select
+    /// the bounded binary-tree match finder at level 19. Other levels retain
+    /// their ordinary match finder and level-derived window.
+    pub fn compress_job_with_tree(&mut self, src: &[u8], job: &Job, out: &mut Vec<u8>) -> Result<()> {
+        self.job_blocks(src, job, None, JobMode::ArchiveTree, out)
+    }
+
+    fn job_blocks(&mut self, src: &[u8], job: &Job, dict: Option<&EncoderDictionary>, mode: JobMode, out: &mut Vec<u8>) -> Result<()> {
         if job.start > job.end || job.end > src.len() || job.prefix_start > job.start {
             return Err(Error::Parameter("job range outside the input"));
         }
         let mut p = self.frame_params(src.len(), dict)?;
-        if use_frame_window {
+        if mode == JobMode::FrameWindow {
             p.window_log = self.cfg.window_log;
         }
         let window_start = job.start.saturating_sub(1 << p.window_log);
         let job = Job { prefix_start: job.prefix_start.max(window_start), ..*job };
-        self.blocks(src, &job, if job.first { dict } else { None }, &p, out)
+        self.blocks(src, &job, if job.first { dict } else { None }, &p, mode == JobMode::ArchiveTree && self.cfg.level == 19, out)
     }
 
     fn frame_params(&self, len: usize, dict: Option<&EncoderDictionary>) -> Result<CParams> {
@@ -150,7 +164,7 @@ impl Compressor {
 
     /// Emits the blocks covering `job`; the first job starts from the dictionary's
     /// state, later ones from none (unknown repeat offsets, no reusable tables).
-    fn blocks(&mut self, src: &[u8], job: &Job, dict: Option<&EncoderDictionary>, p: &CParams, out: &mut Vec<u8>) -> Result<()> {
+    fn blocks(&mut self, src: &[u8], job: &Job, dict: Option<&EncoderDictionary>, p: &CParams, use_tree: bool, out: &mut Vec<u8>) -> Result<()> {
         let w = &mut self.w;
         w.params = *p;
         let hash2_log = if p.strategy == params::Strategy::DFast { p.chain_log } else { 0 };
@@ -166,6 +180,7 @@ impl Compressor {
             (false, _) => [0, 0, 0],
         };
         w.opt.first_block = true;
+        w.opt.use_tree = use_tree;
         let window = 1usize << p.window_log;
         if job.start == job.end {
             if job.last {
@@ -262,6 +277,28 @@ fn frame_params(cfg: &CompressionConfig, len: usize, dict: Option<&EncoderDictio
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn archive_match_finder_is_opt_in_for_each_level_nineteen_job() {
+        let src = b"repeated bytes in an ordinary frame".repeat(20);
+        let mut codec = Compressor::new(CompressionConfig::HIGH).unwrap();
+        let job = Job { start: 0, end: src.len(), prefix_start: 0, first: true, last: true };
+        codec.compress_job_with_tree(&src, &job, &mut Vec::new()).unwrap();
+        assert!(codec.w.opt.use_tree);
+
+        let dictionary = crate::Dictionary::new(b"sample history", crate::DictionaryFormat::Raw { id: 0 }).unwrap();
+        let prepared = EncoderDictionary::new(&dictionary, 19).unwrap();
+        let second = Job { start: src.len() / 2, first: false, ..job };
+        codec.compress_job(&src, &second, Some(&prepared), &mut Vec::new()).unwrap();
+        assert!(!codec.w.opt.use_tree);
+        codec.compress_job_with_tree(&src, &job, &mut Vec::new()).unwrap();
+        codec.compress(&src, None, &mut Vec::new()).unwrap();
+        assert!(!codec.w.opt.use_tree);
+
+        let mut other = Compressor::new(CompressionConfig::DEFAULT).unwrap();
+        other.compress_job_with_tree(&src, &job, &mut Vec::new()).unwrap();
+        assert!(!other.w.opt.use_tree);
+    }
 
     #[test]
     fn optimal_job_at_high_offset_keeps_second_pass_positions_representable() {
