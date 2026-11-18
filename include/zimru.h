@@ -15,6 +15,17 @@
  *   with zimru_error_free.
  * Ownership: anything returned via `*_t*` is owned by the caller and must
  *   be freed with the matching `*_free` function.
+ * Threads: live reader handles support concurrent reads. Serialize all
+ *   operations on the same creator. Before freeing or closing a handle,
+ *   or releasing a blob view, wait for all users of that handle and its
+ *   borrowed pointers. Each call needs separate writable output storage.
+ * Pointers: supply live handles of the declared type. C strings must be
+ *   NUL-terminated. Nonempty buffers must be within a single allocation
+ *   and at most PTRDIFF_MAX bytes. Inputs remain readable and unchanged
+ *   during the call. Writable pointers must be aligned for their type,
+ *   exclusive, and disjoint from handles and other arguments.
+ * Error slots: pass NULL to discard errors, or use an empty pointer slot.
+ *   Free an error and reset its slot to NULL before reusing it.
  */
 
 
@@ -214,13 +225,10 @@ typedef struct zimru_illustration_t {
  * Direct-access info for an item. POD struct populated by
  * [`zimru_item_direct_access`]; mirrors [`crate::DirectAccess`].
  *
- * When `is_direct` is `true`, callers can `pread()` or `mmap()` the
- * item's bytes directly from the on-disk ZIM file at `file_offset`
- * for `size` bytes — no decompression, no copy. The standard ZIM
- * convention is to store fulltext / suggestion / Xapian indexes in
- * uncompressed clusters precisely so consumers can hand `libxapian`
- * an `int fd` + `lseek` instead of materialising the database in
- * memory or in a temp file.
+ * When `is_direct` is `true`, the range is relative to the original
+ * archive source. Read it using `zimru_archive_read_at` on that archive or
+ * `zimru_item_read_at` on this item. Reopening the pathname after an archive
+ * replacement may select a different file.
  *
  * When `is_direct` is `false`, the item lives in a compressed
  * cluster; fall back to [`zimru_item_get_data`] for normal access.
@@ -269,6 +277,21 @@ extern "C" {
  * `zimru_archive_open`.
  */
  void zimru_archive_close(struct zimru_archive_t *arc);
+
+/**
+ * Read raw archive bytes from the source opened by this handle, starting at
+ * the absolute byte `offset`. Writes up to `len` bytes to `dst` and the
+ * count to `out_read`. The count may be short, and is zero at EOF.
+ * On failure returns false, sets the optional error, and reports the number
+ * of bytes already copied. `dst` may be NULL when `len` is zero.
+ */
+
+bool zimru_archive_read_at(const struct zimru_archive_t *arc,
+                           uint64_t offset,
+                           uint8_t *dst,
+                           uintptr_t len,
+                           uintptr_t *out_read,
+                           struct zimru_error_t **err);
 
 /**
  * Total number of dirents (articles + redirects).
@@ -556,7 +579,7 @@ const uint8_t *zimru_archive_metadata(const struct zimru_archive_t *arc,
                                       struct zimru_error_t **err);
 
 /**
- * On-disk byte length of the archive (the mmapped extent).
+ * Byte length of the archive source as recorded at open.
  */
  uint64_t zimru_archive_filesize(const struct zimru_archive_t *arc);
 
@@ -1049,6 +1072,21 @@ struct zimru_blob_t *zimru_item_get_data(const struct zimru_item_t *it,
                                          struct zimru_error_t **err);
 
 /**
+ * Read item content starting at the item-relative byte `offset`, including
+ * items in compressed clusters. Writes up to `len` bytes to `dst` and the
+ * count to `out_read`. The count may be short, and is zero at EOF.
+ * On failure returns false, sets the optional error, and reports the number
+ * of bytes already copied. `dst` may be NULL when `len` is zero.
+ */
+
+bool zimru_item_read_at(const struct zimru_item_t *it,
+                        uint64_t offset,
+                        uint8_t *dst,
+                        uintptr_t len,
+                        uintptr_t *out_read,
+                        struct zimru_error_t **err);
+
+/**
  * Populate `out` with a borrowed view of the item's bytes plus a pin
  * handle that keeps them alive. Returns `false` with `*err` set on
  * any failure (cluster decode error, bad blob index, NULL inputs).
@@ -1056,6 +1094,10 @@ struct zimru_blob_t *zimru_item_get_data(const struct zimru_item_t *it,
  * [`zimru_item_get_data`] — costs one `Arc::clone` (refcount bump,
  * no allocation) per call. The pin must be released exactly once
  * with [`zimru_blob_view_release`].
+ * Initialize a new view to all zeros, release it before repopulating it,
+ * and keep the sole owning instance. A struct copy does not acquire a pin.
+ * A failed call leaves the destination unchanged. A successful view can
+ * outlive its item and archive.
  */
 
 bool zimru_item_blob_view(const struct zimru_item_t *it,
@@ -1063,24 +1105,10 @@ bool zimru_item_blob_view(const struct zimru_item_t *it,
                           struct zimru_error_t **err);
 
 /**
- * Pre-fault the OS page cache for this item's on-disk bytes. Issues
- * `madvise(MADV_WILLNEED)` on the item's region and touches one byte
- * per 4 KB page to force synchronous fault-in. After return, every
- * page is resident; subsequent reads (including reads issued through
- * a different fd onto the same file — the OS page cache is keyed by
- * inode) hit cache instead of disk.
- *
- * Designed for the libzim-shim P7 scenario: kiwix-serve hosting a
- * multi-GB Wikipedia hands Xapian a fd at the embedded Xapian-DB
- * offset, Xapian issues eager DB-validation reads scattered across
- * the DB, and on a cold page cache the first user `/search`
- * blocks for ~12 seconds. Calling this at server start (or in a
- * background thread concurrent with other init) shifts the disk-I/O
- * cost off the first user-facing search.
- *
- * No-op on items in compressed clusters (the page-fault game only
- * makes sense for direct-access regions). Returns `false` with `*err`
- * set on a NULL item or unrecoverable lookup failure.
+ * Warm the OS page cache by reading this uncompressed item's region
+ * sequentially from the original archive source. The operating system
+ * controls how long the pages stay resident. Compressed items are skipped.
+ * Returns false with an error on a NULL item or a read failure.
  */
  bool zimru_item_warmup(const struct zimru_item_t *it, struct zimru_error_t **err);
 
@@ -1095,6 +1123,7 @@ bool zimru_item_blob_view(const struct zimru_item_t *it,
 /**
  * Derive a deterministic 16-byte UUID from an arbitrary byte seed.
  *
+ * Nonempty `seed` must point to `seed_len` readable bytes in one allocation.
  * `seed` may be NULL only if `seed_len` is 0. `out` must point to at
  * least 16 writable bytes. The output has the high nibble of byte 6
  * set to `4` and the high two bits of byte 8 set to `10` (RFC 4122

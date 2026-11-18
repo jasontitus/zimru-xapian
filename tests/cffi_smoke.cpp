@@ -207,10 +207,7 @@ int main(int argc, char** argv) {
         }
     }
 
-    // 12. Direct-access info. The smoke ZIM uses zstd compression so
-    //     the direct path is unreachable here — we just assert the
-    //     C ABI returns is_direct=false cleanly. The pread round-trip
-    //     for an uncompressed cluster lives in tests/direct_access.rs.
+    // 12. Direct-access info for the compressed home entry.
     {
         zimru_direct_access_t da{};
         zimru_item_direct_access(it.get(), &da);
@@ -222,8 +219,31 @@ int main(int argc, char** argv) {
         }
     }
 
-    // 12a. Phase 2 additions: filesize, article/media counts, random entry,
-    //      deterministic seed → UUID.
+    // An uncompressed item and its raw archive extent expose the same bytes.
+    {
+        Entry direct_entry(zimru_archive_get_entry_by_ns_path(a.get(), 'X', "read-test", &raw_err));
+        if (!direct_entry) die("missing uncompressed read fixture");
+        Item direct(zimru_entry_get_item(direct_entry.get(), true, &raw_err));
+        if (!direct) die("uncompressed fixture has no item");
+        zimru_direct_access_t region{};
+        zimru_item_direct_access(direct.get(), &region);
+        if (!region.is_direct || region.size != 80000) die("unexpected uncompressed item extent");
+        std::string item_bytes(75000, '\0'), archive_bytes(75000, '\0');
+        std::size_t n = 0;
+        if (!zimru_item_read_at(direct.get(), 13, reinterpret_cast<uint8_t*>(item_bytes.data()),
+                                item_bytes.size(), &n, &raw_err) || n != item_bytes.size())
+            die("uncompressed item read failed");
+        if (!zimru_archive_read_at(a.get(), region.file_offset + 13,
+                                   reinterpret_cast<uint8_t*>(archive_bytes.data()),
+                                   archive_bytes.size(), &n, &raw_err) || n != archive_bytes.size())
+            die("direct archive range read failed");
+        if (archive_bytes != item_bytes) die("direct archive and item reads disagree");
+        for (std::size_t i = 0; i < n; ++i) {
+            if (static_cast<unsigned char>(item_bytes[i]) != (i + 13) % 251)
+                die("uncompressed read content differs");
+        }
+    }
+    // 12a. Filesize, article/media counts, random entry, deterministic UUID.
     {
         std::uint64_t fsz = zimru_archive_filesize(a.get());
         if (fsz == 0) die("filesize == 0");

@@ -29,13 +29,10 @@ const VERSION: &str = "zimdump (zimru) 0.1.0\n+ libzim equivalent: zimru 0.1.0";
 
 #[cfg(unix)]
 fn restore_sigpipe() {
-    extern "C" {
-        fn signal(signum: i32, handler: usize) -> usize;
-    }
-    // SIGPIPE = 13, SIG_DFL = 0 — restore default so a closed pipe terminates
-    // us cleanly instead of panicking inside std's print! machinery.
+    // SAFETY: install the platform's default action before starting any workers.
+    // A closed output pipe should terminate this CLI as usual for Unix tools.
     unsafe {
-        let _ = signal(13, 0);
+        libc::signal(libc::SIGPIPE, libc::SIG_DFL);
     }
 }
 #[cfg(not(unix))]
@@ -696,70 +693,61 @@ fn cmd_dump(args: &[String]) -> Result<ExitCode, Error> {
 /// a parent path is replaced with a symlink. Replacing (rather than
 /// truncating) final files also leaves external hard-link targets intact.
 #[cfg(unix)]
-struct DumpRoot(std::fs::File);
+struct DumpRoot(std::os::fd::OwnedFd);
 
 #[cfg(unix)]
 impl DumpRoot {
+    const DIR_FLAGS: rustix::fs::OFlags = rustix::fs::OFlags::RDONLY
+        .union(rustix::fs::OFlags::DIRECTORY)
+        .union(rustix::fs::OFlags::NOFOLLOW)
+        .union(rustix::fs::OFlags::CLOEXEC);
+
     fn open(path: &std::path::Path) -> io::Result<Self> {
-        use std::os::unix::fs::OpenOptionsExt;
-        // This is the caller-selected root, not an archive-controlled path,
-        // so a symlinked `--dir` (e.g. macOS /tmp) is legitimate: resolve it
-        // once, then open the real directory. Everything below the root is
-        // archive-controlled and opened O_NOFOLLOW.
+        // The caller may select a symlinked root. Resolve it once, then walk
+        // every archive-controlled component relative to this descriptor.
         std::fs::create_dir_all(path)?;
         let path = std::fs::canonicalize(path)?;
-        let file = std::fs::OpenOptions::new()
-            .read(true)
-            .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC)
-            .open(&path)?;
-        Ok(Self(file))
+        Ok(Self(rustix::fs::open(
+            path,
+            Self::DIR_FLAGS,
+            rustix::fs::Mode::empty(),
+        )?))
     }
 
-    fn parent(&self, path: &std::path::Path) -> io::Result<(std::fs::File, std::ffi::CString)> {
-        use std::os::fd::{AsRawFd, FromRawFd};
-        use std::os::unix::ffi::OsStrExt;
+    fn parent<'a>(
+        &self,
+        path: &'a std::path::Path,
+    ) -> io::Result<(std::os::fd::OwnedFd, &'a std::ffi::OsStr)> {
+        use rustix::fs::{mkdirat, openat, Mode};
+        use rustix::io::Errno;
         use std::path::Component;
+
         let mut parts = path.components().peekable();
         let mut dir = self.0.try_clone()?;
         while let Some(part) = parts.next() {
-            let Component::Normal(part) = part else {
+            let Component::Normal(name) = part else {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidInput,
                     "non-relative dump path",
                 ));
             };
-            let name = std::ffi::CString::new(part.as_bytes())
-                .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "NUL in dump path"))?;
             if parts.peek().is_none() {
                 return Ok((dir, name));
             }
-            let open = || unsafe {
-                libc::openat(
-                    dir.as_raw_fd(),
-                    name.as_ptr(),
-                    libc::O_RDONLY | libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC,
-                )
-            };
-            let mut fd = open();
-            if fd < 0 {
-                let error = io::Error::last_os_error();
-                if error.kind() != io::ErrorKind::NotFound {
-                    return Err(error);
-                }
-                let made = unsafe { libc::mkdirat(dir.as_raw_fd(), name.as_ptr(), 0o777) };
-                if made < 0 {
-                    let error = io::Error::last_os_error();
-                    if error.kind() != io::ErrorKind::AlreadyExists {
-                        return Err(error);
+            let open = || openat(&dir, name, Self::DIR_FLAGS, Mode::empty());
+            dir = match open() {
+                Ok(next) => next,
+                Err(Errno::NOENT) => {
+                    match mkdirat(&dir, name, Mode::from_raw_mode(0o777)) {
+                        Ok(()) | Err(Errno::EXIST) => {}
+                        Err(error) => return Err(error.into()),
                     }
+                    // Another process may have won mkdirat. Reopen with the
+                    // same no-follow flags so a link can never become a parent.
+                    open()?
                 }
-                // Even if another process won mkdirat, never follow its link.
-                fd = open();
-            }
-            if fd < 0 {
-                return Err(io::Error::last_os_error());
-            }
-            dir = unsafe { std::fs::File::from_raw_fd(fd) };
+                Err(error) => return Err(error.into()),
+            };
         }
         Err(io::Error::new(
             io::ErrorKind::InvalidInput,
@@ -770,81 +758,53 @@ impl DumpRoot {
     fn publish(
         &self,
         path: &std::path::Path,
-        create: impl Fn(&std::fs::File, &std::ffi::CStr) -> io::Result<()>,
+        create: impl Fn(&std::os::fd::OwnedFd, &str) -> io::Result<()>,
     ) -> io::Result<()> {
-        use std::os::fd::AsRawFd;
+        use rustix::fs::{renameat, unlinkat, AtFlags};
         use std::sync::atomic::{AtomicU64, Ordering};
+
         static NEXT: AtomicU64 = AtomicU64::new(0);
         let (parent, name) = self.parent(path)?;
         loop {
-            let temp = std::ffi::CString::new(format!(
+            let temp = format!(
                 ".zimdump-{}-{}",
                 std::process::id(),
                 NEXT.fetch_add(1, Ordering::Relaxed)
-            ))
-            .unwrap();
+            );
             match create(&parent, &temp) {
                 Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
-                Err(error) => return Err(error),
-                Ok(()) => {}
+                result => result?,
             }
-            let result = unsafe {
-                libc::renameat(
-                    parent.as_raw_fd(),
-                    temp.as_ptr(),
-                    parent.as_raw_fd(),
-                    name.as_ptr(),
-                )
-            };
-            if result == 0 {
-                return Ok(());
+            if let Err(error) = renameat(&parent, temp.as_str(), &parent, name) {
+                let _ = unlinkat(&parent, temp.as_str(), AtFlags::empty());
+                return Err(error.into());
             }
-            let error = io::Error::last_os_error();
-            unsafe { libc::unlinkat(parent.as_raw_fd(), temp.as_ptr(), 0) };
-            return Err(error);
+            return Ok(());
         }
     }
 
     fn write(&self, path: &std::path::Path, data: &[u8]) -> io::Result<()> {
-        use std::io::Write as _;
-        use std::os::fd::{AsRawFd, FromRawFd};
+        use rustix::fs::{openat, unlinkat, AtFlags, Mode, OFlags};
+
         self.publish(path, |parent, name| {
-            let fd = unsafe {
-                libc::openat(
-                    parent.as_raw_fd(),
-                    name.as_ptr(),
-                    libc::O_WRONLY
-                        | libc::O_CREAT
-                        | libc::O_EXCL
-                        | libc::O_NOFOLLOW
-                        | libc::O_CLOEXEC,
-                    0o666,
-                )
-            };
-            if fd < 0 {
-                return Err(io::Error::last_os_error());
-            }
-            let mut file = unsafe { std::fs::File::from_raw_fd(fd) };
+            let fd = openat(
+                parent,
+                name,
+                OFlags::WRONLY | OFlags::CREATE | OFlags::EXCL | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+                Mode::from_raw_mode(0o666),
+            )?;
+            let mut file = std::fs::File::from(fd);
             let result = file.write_all(data);
             if result.is_err() {
-                unsafe { libc::unlinkat(parent.as_raw_fd(), name.as_ptr(), 0) };
+                let _ = unlinkat(parent, name, AtFlags::empty());
             }
             result
         })
     }
 
     fn symlink(&self, path: &std::path::Path, target: &str) -> io::Result<()> {
-        use std::os::fd::AsRawFd;
-        let target = std::ffi::CString::new(target)
-            .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "NUL in redirect target"))?;
         self.publish(path, |parent, name| {
-            let result =
-                unsafe { libc::symlinkat(target.as_ptr(), parent.as_raw_fd(), name.as_ptr()) };
-            if result == 0 {
-                Ok(())
-            } else {
-                Err(io::Error::last_os_error())
-            }
+            Ok(rustix::fs::symlinkat(target, parent, name)?)
         })
     }
 }

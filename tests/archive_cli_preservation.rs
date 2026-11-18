@@ -6,7 +6,6 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use md5::{Digest, Md5};
 use zimru::Archive;
 
 struct TempDir(PathBuf);
@@ -168,7 +167,7 @@ fn fixture(
         out.extend_from_slice(cluster);
     }
     assert_eq!(out.len() as u64, cursor);
-    let digest = Md5::digest(&out);
+    let digest = md5::compute(&out).0;
     out.extend_from_slice(&digest);
     (out, cluster_offsets)
 }

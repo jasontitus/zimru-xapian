@@ -62,6 +62,25 @@ pub unsafe extern "C" fn zimru_archive_close(arc: *mut zimru_archive_t) {
     }
 }
 
+/// Read raw archive bytes from the source opened by this handle, starting at
+/// the absolute byte `offset`. Writes up to `len` bytes to `dst` and the
+/// count to `out_read`. The count may be short, and is zero at EOF.
+/// On failure returns false, sets the optional error, and reports the number
+/// of bytes already copied. `dst` may be NULL when `len` is zero.
+#[no_mangle]
+pub unsafe extern "C" fn zimru_archive_read_at(
+    arc: *const zimru_archive_t,
+    offset: u64,
+    dst: *mut u8,
+    len: usize,
+    out_read: *mut usize,
+    err: *mut *mut zimru_error_t,
+) -> bool {
+    super::read::copy_read_at(arc, offset, dst, len, out_read, err, |arc, pos, buf| {
+        arc.inner.read_at(pos, buf)
+    })
+}
+
 /// Total number of dirents (articles + redirects).
 #[no_mangle]
 pub unsafe extern "C" fn zimru_archive_entry_count(arc: *const zimru_archive_t) -> u32 {
@@ -744,7 +763,7 @@ pub unsafe extern "C" fn zimru_archive_metadata(
     }
 }
 
-/// On-disk byte length of the archive (the mmapped extent).
+/// Byte length of the archive source as recorded at open.
 #[no_mangle]
 pub unsafe extern "C" fn zimru_archive_filesize(arc: *const zimru_archive_t) -> u64 {
     if arc.is_null() {

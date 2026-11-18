@@ -19,6 +19,13 @@ impl MimeList {
                 off = next;
                 break;
             }
+            if list.len() > usize::from(u16::MAX) {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "MIME list exceeds the 16-bit index space",
+                )
+                .into());
+            }
             list.push(s.to_string());
             off = next;
         }

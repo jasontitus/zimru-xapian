@@ -1,0 +1,245 @@
+//! Positioned reads on a single open file. Small metadata probes share a
+//! bounded page cache; sequential cluster/checksum reads bypass that cache.
+use std::fs::File;
+use std::io::{self, Read};
+use std::num::NonZeroUsize;
+use std::ops::Range;
+use std::sync::Arc;
+
+use lru::LruCache;
+use parking_lot::Mutex;
+
+use crate::error::{Error, Result};
+
+const PAGE: usize = 4096;
+const SHARDS: usize = 16;
+const PAGES_PER_SHARD: usize = 16;
+// Directory strings and the whole MIME declaration are variable-length. This
+// ceiling applies to one metadata record, never to the archive or blob size.
+pub(super) const DEFAULT_MAX_METADATA_RECORD: usize = 16 << 20;
+
+#[derive(Debug)]
+enum Source {
+    File(File),
+    #[cfg(feature = "legacy-mmap")]
+    Mapped(memmap2::Mmap),
+}
+
+#[derive(Debug)]
+pub(super) struct Storage {
+    source: Source,
+    len: u64,
+    metadata_limit: usize,
+    pages: [Mutex<LruCache<u64, Arc<[u8]>>>; SHARDS],
+    #[cfg(not(any(unix, windows)))]
+    seek_lock: Mutex<()>,
+}
+
+impl Storage {
+    pub(super) fn file(file: File, metadata_limit: usize) -> io::Result<Self> {
+        let len = file.metadata()?.len();
+        Ok(Self::new(Source::File(file), len, metadata_limit))
+    }
+
+    #[cfg(feature = "legacy-mmap")]
+    pub(super) fn mapped(map: memmap2::Mmap) -> Self {
+        let len = map.len() as u64;
+        Self::new(Source::Mapped(map), len, DEFAULT_MAX_METADATA_RECORD)
+    }
+
+    fn new(source: Source, len: u64, metadata_limit: usize) -> Self {
+        Self {
+            source,
+            len,
+            metadata_limit,
+            pages: std::array::from_fn(|_| {
+                Mutex::new(LruCache::new(NonZeroUsize::new(PAGES_PER_SHARD).unwrap()))
+            }),
+            #[cfg(not(any(unix, windows)))]
+            seek_lock: Mutex::new(()),
+        }
+    }
+
+    pub(super) fn len(&self) -> u64 {
+        self.len
+    }
+
+    pub(super) fn range(&self, start: u64, length: u64) -> Result<Range<u64>> {
+        let end = start
+            .checked_add(length)
+            .filter(|end| *end <= self.len)
+            .ok_or(Error::Truncated(start))?;
+        Ok(start..end)
+    }
+
+    fn read_exact(&self, at: u64, out: &mut [u8]) -> io::Result<()> {
+        match &self.source {
+            Source::File(file) => {
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::FileExt;
+                    file.read_exact_at(out, at)
+                }
+                #[cfg(windows)]
+                {
+                    use std::os::windows::fs::FileExt;
+                    let mut pos = at;
+                    let mut rest = out;
+                    while !rest.is_empty() {
+                        match file.seek_read(rest, pos) {
+                            Ok(0) => return Err(io::ErrorKind::UnexpectedEof.into()),
+                            Ok(n) => {
+                                rest = &mut rest[n..];
+                                pos += n as u64;
+                            }
+                            Err(err) if err.kind() == io::ErrorKind::Interrupted => continue,
+                            Err(err) => return Err(err),
+                        }
+                    }
+                    Ok(())
+                }
+                #[cfg(not(any(unix, windows)))]
+                {
+                    use std::io::{Seek, SeekFrom};
+                    let _guard = self.seek_lock.lock();
+                    let mut fd = file;
+                    fd.seek(SeekFrom::Start(at))?;
+                    fd.read_exact(out)
+                }
+            }
+            #[cfg(feature = "legacy-mmap")]
+            Source::Mapped(map) => {
+                let pos = usize::try_from(at).map_err(|_| io::ErrorKind::UnexpectedEof)?;
+                let end = pos
+                    .checked_add(out.len())
+                    .ok_or(io::ErrorKind::UnexpectedEof)?;
+                out.copy_from_slice(map.get(pos..end).ok_or(io::ErrorKind::UnexpectedEof)?);
+                Ok(())
+            }
+        }
+    }
+
+    fn page(&self, at: u64) -> Result<Arc<[u8]>> {
+        let number = at / PAGE as u64;
+        let shard = &self.pages[number as usize % SHARDS];
+        if let Some(page) = shard.lock().get(&number).cloned() {
+            return Ok(page);
+        }
+        let start = number * PAGE as u64;
+        let len = (self.len - start).min(PAGE as u64) as usize;
+        let mut page = vec![0; len];
+        self.read_exact(start, &mut page)?;
+        let page: Arc<[u8]> = page.into();
+        shard.lock().put(number, page.clone());
+        Ok(page)
+    }
+
+    /// Try the page containing the metadata record first. Records crossing a
+    /// page boundary are retried in successively larger bounded buffers.
+    pub(super) fn parse<T>(&self, at: u64, parse: impl Fn(&[u8]) -> Result<T>) -> Result<T> {
+        self.range(at, 1)?;
+        let max = (self.len - at).min(self.metadata_limit as u64) as usize;
+        let parse_prefix = |bytes: &[u8]| match parse(bytes) {
+            Err(Error::Truncated(_)) if bytes.len() == max && self.len - at > max as u64 => {
+                Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "ZIM metadata record exceeds configured byte limit",
+                )
+                .into())
+            }
+            result => result,
+        };
+        #[cfg(feature = "legacy-mmap")]
+        if let Source::Mapped(map) = &self.source {
+            let pos = at as usize;
+            return parse_prefix(&map[pos..pos + max]);
+        }
+        let page = self.page(at)?;
+        let tail = &page[at as usize % PAGE..];
+        let tail = &tail[..tail.len().min(max)];
+        match parse_prefix(tail) {
+            Err(Error::Truncated(_)) if tail.len() < max => {}
+            result => return result,
+        }
+        let mut size = (2 * PAGE).min(max);
+        let mut buf = tail.to_vec();
+        loop {
+            let have = buf.len();
+            buf.resize(size, 0);
+            self.read_exact(at + have as u64, &mut buf[have..])?;
+            match parse_prefix(&buf) {
+                Err(Error::Truncated(_)) if size < max => size = size.saturating_mul(2).min(max),
+                result => return result,
+            }
+        }
+    }
+
+    pub(super) fn reader(&self, range: Range<u64>) -> StorageReader<'_> {
+        StorageReader {
+            storage: self,
+            remaining: range,
+        }
+    }
+
+    pub(super) fn sequential(&self) {
+        match &self.source {
+            Source::File(file) => crate::io_hints::hint_sequential(file),
+            #[cfg(all(feature = "legacy-mmap", unix))]
+            Source::Mapped(map) => {
+                let _ = map.advise(memmap2::Advice::Sequential);
+            }
+            #[cfg(all(feature = "legacy-mmap", not(unix)))]
+            Source::Mapped(_) => {}
+        }
+    }
+}
+
+pub(super) struct StorageReader<'a> {
+    storage: &'a Storage,
+    remaining: Range<u64>,
+}
+
+impl Read for StorageReader<'_> {
+    fn read(&mut self, out: &mut [u8]) -> io::Result<usize> {
+        let len = (out.len() as u64).min(self.remaining.end - self.remaining.start) as usize;
+        if len != 0 {
+            self.storage
+                .read_exact(self.remaining.start, &mut out[..len])?;
+            self.remaining.start += len as u64;
+        }
+        Ok(len)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::TableCache;
+    use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Barrier;
+
+    #[test]
+    fn concurrent_table_first_reads_publish_one_value_and_retry_after_error() {
+        let cache = TableCache::default();
+        let starts = AtomicUsize::new(0);
+        let gate = Barrier::new(12);
+        assert!(cache.get_or_try_init(|| Err(Error::EntryNotFound)).is_err());
+        std::thread::scope(|scope| {
+            for _ in 0..12 {
+                scope.spawn(|| {
+                    gate.wait();
+                    assert_eq!(
+                        *cache
+                            .get_or_try_init(|| {
+                                starts.fetch_add(1, Ordering::Relaxed);
+                                Ok(17)
+                            })
+                            .unwrap(),
+                        17
+                    );
+                });
+            }
+        });
+        assert_eq!(starts.load(Ordering::Relaxed), 1);
+    }
+}

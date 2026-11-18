@@ -5,21 +5,27 @@
 //! C++ class methods one-for-one so swapping out a Rust libzim binding for
 //! `zimru` should mostly require only a `use` change.
 
+mod storage;
+
 use std::cmp::Ordering;
 use std::fs::File;
+use std::io::{self, Read};
+use std::ops::Range;
 use std::path::Path;
 use std::sync::{Arc, Mutex, OnceLock};
 
 use lru::LruCache;
-use memmap2::{Advice, Mmap};
+#[cfg(feature = "legacy-mmap")]
+use memmap2::Mmap;
 use rayon::prelude::*;
 
-use crate::cluster::Cluster;
+use crate::cluster::{Cluster, RawOffsets};
 use crate::dirent::{ArticleEntry, Dirent};
 use crate::error::{Error, Result};
 use crate::header::{Header, NO_MAIN_PAGE};
 use crate::mime::MimeList;
 use crate::raw;
+use storage::Storage;
 
 /// Maximum redirect chain depth before bailing out.
 const MAX_REDIRECTS: usize = 16;
@@ -141,9 +147,34 @@ pub struct ClusterCacheStats {
     pub evictions: u64,
 }
 
+/// OnceLock's stable API lacks fallible initialization. Hold the cold-path
+/// lock across the read/allocation, leave it empty on error, and take no lock
+/// after publication. Each table has its own lock since loading a title blob
+/// can first require the cluster-offset table.
+#[derive(Debug, Default)]
+struct TableCache<T> {
+    value: OnceLock<T>,
+    initializing: parking_lot::Mutex<()>,
+}
+
+impl<T> TableCache<T> {
+    fn get_or_try_init(&self, load: impl FnOnce() -> Result<T>) -> Result<&T> {
+        if let Some(value) = self.value.get() {
+            return Ok(value);
+        }
+        let _guard = self.initializing.lock();
+        if let Some(value) = self.value.get() {
+            return Ok(value);
+        }
+        let value = load()?;
+        Ok(self.value.get_or_init(|| value))
+    }
+}
+
 #[derive(Debug)]
 struct ArchiveCore {
-    mmap: Mmap,
+    storage: Storage,
+    cluster_limits: Option<crate::ClusterReadLimits>,
     header: Header,
     mimes: MimeList,
     /// File length, used as the upper bound when sizing the trailing cluster.
@@ -152,7 +183,7 @@ struct ArchiveCore {
     /// Cached title-order listing: dirent indices sorted by (namespace, title).
     /// Prefer the modern front-article subset at `X/listing/titleOrdered/v1`;
     /// otherwise use the full header/v0 table.
-    title_listing: OnceLock<Arc<[u32]>>,
+    title_listing: TableCache<Arc<[u32]>>,
     /// Cached `(article_count, media_count)` for the content namespace,
     /// computed on first request via [`Archive::article_and_media_counts`].
     /// "article" is any item whose mimetype starts with `text/html`;
@@ -165,7 +196,32 @@ struct ArchiveCore {
     /// order, and spliced streamed clusters land at the tail), so a
     /// cluster's extent must be bounded by the next-greater *offset*,
     /// not by `cluster_pointer(idx + 1)`.
-    sorted_cluster_offsets: OnceLock<Vec<u64>>,
+    sorted_cluster_offsets: TableCache<Vec<u64>>,
+    // Only one physical cluster interval can straddle the header title pointer.
+    title_boundary: OnceLock<(u32, u64)>,
+}
+
+/// Admission limits checked before archive tables or decoded clusters are
+/// materialized. Simultaneous callers and returned objects use additional memory.
+#[derive(Clone, Copy, Debug)]
+pub struct ArchiveLimits {
+    /// Maximum bytes inspected for one metadata record, including the fixed header.
+    pub max_metadata_record_bytes: usize,
+    pub max_entries: u32,
+    pub max_clusters: u32,
+    /// Optional per-cluster bounds for all materializing reads on this archive.
+    pub cluster: Option<crate::ClusterReadLimits>,
+}
+
+impl Default for ArchiveLimits {
+    fn default() -> Self {
+        Self {
+            max_metadata_record_bytes: storage::DEFAULT_MAX_METADATA_RECORD,
+            max_entries: u32::MAX,
+            max_clusters: u32::MAX,
+            cluster: None,
+        }
+    }
 }
 
 /// A read-only ZIM archive.
@@ -175,28 +231,66 @@ pub struct Archive {
 }
 
 impl Archive {
-    /// Open the archive at `path` (memory mapped).
+    /// Open one ZIM file for positioned reads. Split archives must first be joined.
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
-        let f = File::open(path.as_ref())?;
-        let mmap = unsafe { Mmap::map(&f)? };
-        Self::from_mmap(mmap)
+        Self::from_file(File::open(path)?)
     }
 
-    /// Construct from an already-mapped buffer (useful for tests / multi-part).
+    /// Read an already-open file. All lookups and content reads use this
+    /// handle regardless of later renames. The file's contents should remain
+    /// stable for the lifetime of the archive so that cached metadata and
+    /// subsequently read payloads refer to the same archive revision.
+    ///
+    /// Metadata probes share at most 1 MiB of cached pages per archive.
+    /// A single directory record or MIME list may occupy up to 16 MiB.
+    pub fn from_file(file: File) -> Result<Self> {
+        Self::from_file_with_limits(file, ArchiveLimits::default())
+    }
+
+    /// Open a single file using caller-selected metadata, table and codec limits.
+    pub fn from_file_with_limits(file: File, limits: ArchiveLimits) -> Result<Self> {
+        if limits.max_metadata_record_bytes < crate::header::HEADER_SIZE {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "metadata limit is smaller than the ZIM header",
+            )
+            .into());
+        }
+        Self::from_storage(
+            Storage::file(file, limits.max_metadata_record_bytes)?,
+            limits,
+        )
+    }
+
+    /// Read an existing mapping whose creator upholds its immutability contract.
+    #[cfg(feature = "legacy-mmap")]
     pub fn from_mmap(mmap: Mmap) -> Result<Self> {
-        let header = Header::parse(&mmap)?;
-        let (mimes, _end) = MimeList::parse(&mmap, header.mime_list_pos as usize)?;
-        let file_len = mmap.len() as u64;
+        Self::from_storage(Storage::mapped(mmap), ArchiveLimits::default())
+    }
+
+    fn from_storage(storage: Storage, limits: ArchiveLimits) -> Result<Self> {
+        let file_len = storage.len();
+        let header = storage.parse(0, Header::parse)?;
+        if header.entry_count > limits.max_entries || header.cluster_count > limits.max_clusters {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "archive counts exceed configured limits",
+            )
+            .into());
+        }
+        let (mimes, _) = storage.parse(header.mime_list_pos, |buf| MimeList::parse(buf, 0))?;
         Ok(Archive {
             core: Arc::new(ArchiveCore {
-                mmap,
+                storage,
+                cluster_limits: limits.cluster,
                 header,
                 mimes,
                 file_len,
                 cluster_cache: Mutex::new(ClusterByteCache::new(DEFAULT_CLUSTER_CACHE_MAX_BYTES)),
-                title_listing: OnceLock::new(),
+                title_listing: TableCache::default(),
                 content_counts: OnceLock::new(),
-                sorted_cluster_offsets: OnceLock::new(),
+                sorted_cluster_offsets: TableCache::default(),
+                title_boundary: OnceLock::new(),
             }),
         })
     }
@@ -209,18 +303,19 @@ impl Archive {
         crate::Uuid::from_bytes(self.core.header.uuid)
     }
 
-    /// Hint the OS that this archive will be scanned start-to-end.
-    /// Calls `madvise(MADV_SEQUENTIAL)` on the entire mapping, which
-    /// (on Linux) doubles readahead and drops pages after they're
-    /// touched, and (on macOS) enables `MADV_SEQUENTIAL`-equivalent
-    /// pre-paging. Best-effort — failures are ignored.
-    ///
-    /// Use this before bulk operations that walk every dirent and
-    /// every cluster (e.g. `zimrecreate`, `zimcheck`,
-    /// `zimdump --all`). Don't call it for typical reader workloads
-    /// — the default `MADV_NORMAL` is better for random access.
+    /// Hint that subsequent reads will scan the archive sequentially.
     pub fn advise_sequential_scan(&self) {
-        let _ = self.core.mmap.advise(Advice::Sequential);
+        self.core.storage.sequential();
+    }
+
+    /// Read bytes from the archive at a physical offset, using the same open
+    /// file as the metadata lookups. Returns zero at or beyond the file end.
+    pub fn read_at(&self, offset: u64, buf: &mut [u8]) -> Result<usize> {
+        let end = self.file_len();
+        if offset >= end {
+            return Ok(0);
+        }
+        Ok(self.core.storage.reader(offset..end).read(buf)?)
     }
 
     /// Total number of dirents (articles + redirects + reserved).
@@ -275,35 +370,29 @@ impl Archive {
             return Err(Error::NoChecksum);
         }
         let offset = self.core.header.checksum_pos;
-        let pos = usize::try_from(offset).map_err(|_| Error::Truncated(offset))?;
-        let end = pos.checked_add(16).ok_or(Error::Truncated(offset))?;
-        let bytes = self
-            .core
-            .mmap
-            .get(pos..end)
-            .ok_or(Error::Truncated(offset))?;
-        let mut out = [0u8; 16];
-        out.copy_from_slice(bytes);
+        let range = self.core.storage.range(offset, 16)?;
+        let mut out = [0; 16];
+        self.core.storage.reader(range).read_exact(&mut out)?;
         Ok(out)
     }
 
-    /// Verify the archive's MD5 checksum.
+    /// Verify the archive's MD5 checksum with bounded sequential reads.
     pub fn check(&self) -> Result<bool> {
-        use md5::{Digest, Md5};
-        let pos = self.core.header.checksum_pos as usize;
-        if pos == 0
-            || pos
-                .checked_add(16)
-                .is_none_or(|end| end > self.core.mmap.len())
-        {
+        let pos = self.core.header.checksum_pos;
+        if pos == 0 || self.core.storage.range(pos, 16).is_err() {
             return Err(Error::NoChecksum);
         }
-        let mut h = Md5::new();
-        // Hash everything before the checksum.
-        h.update(&self.core.mmap[..pos]);
-        let computed: [u8; 16] = h.finalize().into();
-        let stored = self.checksum()?;
-        Ok(computed == stored)
+        let mut h = md5::Context::new();
+        let mut reader = self.core.storage.reader(0..pos);
+        let mut buf = vec![0; 128 * 1024];
+        loop {
+            let n = reader.read(&mut buf)?;
+            if n == 0 {
+                break;
+            }
+            h.consume(&buf[..n]);
+        }
+        Ok(h.finalize().0 == self.checksum()?)
     }
 
     /// Return the full mime-type list (in declaration order).
@@ -315,7 +404,7 @@ impl Archive {
     /// path order).
     pub fn entry_by_url_index(&self, idx: u32) -> Result<Entry> {
         let off = self.url_pointer(idx)?;
-        let dirent = Dirent::parse(&self.core.mmap, off as usize)?;
+        let dirent = self.dirent(off)?;
         Ok(Entry {
             archive: self.clone(),
             url_index: idx,
@@ -344,9 +433,13 @@ impl Archive {
     /// front-article subset, even when a full header title table also exists.
     /// Otherwise the full header table or older v0 listing is used.
     pub fn title_listing(&self) -> Result<Arc<[u32]>> {
-        if let Some(cached) = self.core.title_listing.get() {
-            return Ok(cached.clone());
-        }
+        self.core
+            .title_listing
+            .get_or_try_init(|| self.load_title_listing())
+            .cloned()
+    }
+
+    fn load_title_listing(&self) -> Result<Arc<[u32]>> {
         let v = if self.core.header.uses_new_namespaces() {
             self.named_title_listing("listing/titleOrdered/v1")?
         } else {
@@ -362,19 +455,17 @@ impl Archive {
                     .ok_or(Error::EntryNotFound)?,
             },
         };
-        let _ = self.core.title_listing.set(v.clone());
         Ok(v)
     }
 
     fn header_title_listing(&self) -> Result<Arc<[u32]>> {
-        let bytes = self.pointer_table(self.core.header.title_ptr_pos, self.entry_count(), 4)?;
-        Ok(bytes
-            .as_chunks::<4>()
-            .0
-            .iter()
-            .copied()
-            .map(u32::from_le_bytes)
-            .collect())
+        Ok(self
+            .read_table(
+                self.core.header.title_ptr_pos,
+                self.entry_count(),
+                u32::from_le_bytes,
+            )?
+            .into())
     }
 
     fn named_title_listing(&self, path: &str) -> Result<Option<Arc<[u32]>>> {
@@ -383,7 +474,20 @@ impl Archive {
             Err(Error::EntryNotFound) => return Ok(None),
             Err(err) => return Err(err),
         };
-        let blob = entry.get_item(true)?.get_data()?;
+        let item = entry.get_item(true)?;
+        let direct = self.blob_direct_access(item.cluster_index(), item.blob_index())?;
+        if direct.is_direct {
+            if !direct.size.is_multiple_of(4) || direct.size / 4 > u64::from(self.entry_count()) {
+                return Err(Error::Truncated(direct.file_offset));
+            }
+            let listing = self.read_table(
+                direct.file_offset,
+                (direct.size / 4) as u32,
+                u32::from_le_bytes,
+            )?;
+            return Ok(Some(listing.into()));
+        }
+        let blob = item.get_data()?;
         let bytes = blob.data();
         if !bytes.len().is_multiple_of(4) || bytes.len() / 4 > self.entry_count() as usize {
             return Err(Error::Truncated(bytes.len() as u64));
@@ -443,7 +547,7 @@ impl Archive {
         Ok(hi_idx.saturating_sub(lo_idx))
     }
 
-    /// On-disk byte length of the archive (the mmapped extent). For
+    /// On-disk byte length of the opened file. For
     /// multipart archives this is currently the size of the part we've
     /// opened; multipart-aware sizing is a future TODO.
     pub fn file_len(&self) -> u64 {
@@ -560,8 +664,8 @@ impl Archive {
         let attempts = (n as u64).max(64);
         for _ in 0..attempts {
             let pick = (x % n as u64) as u32;
-            let off = self.url_pointer(pick)? as usize;
-            let ns_byte = raw::u8_at(&self.core.mmap, off + 3)?;
+            let off = self.url_pointer(pick)?;
+            let ns_byte = self.core.storage.parse(off, |buf| raw::u8_at(buf, 3))?;
             if ns_byte != NS_METADATA && ns_byte != NS_INDEX {
                 return self.entry_by_url_index(pick);
             }
@@ -581,7 +685,7 @@ impl Archive {
             let off = self.url_pointer(mid)?;
             // Read the namespace byte directly without parsing the rest of
             // the dirent — it's at a fixed offset (3) inside every dirent.
-            let dirent_ns = raw::u8_at(&self.core.mmap, off as usize + 3)?;
+            let dirent_ns = self.core.storage.parse(off, |buf| raw::u8_at(buf, 3))?;
             if dirent_ns < ns {
                 lo = mid + 1;
             } else {
@@ -601,16 +705,15 @@ impl Archive {
             let off = self.url_pointer(mid)?;
             // Probe with `key_at` (no allocation) — only materialize the
             // full dirent on the matched leaf.
-            let (d_ns, d_url) = Dirent::key_at(&self.core.mmap, off as usize)?;
-            let cmp = match ns.cmp(&d_ns) {
-                Ordering::Equal => url.cmp(d_url),
-                other => other,
-            };
+            let cmp = self.core.storage.parse(off, |buf| {
+                let (d_ns, d_key) = Dirent::key_at(buf, 0)?;
+                Ok(ns.cmp(&d_ns).then_with(|| url.cmp(d_key)))
+            })?;
             match cmp {
                 Ordering::Less => hi = mid,
                 Ordering::Greater => lo = mid + 1,
                 Ordering::Equal => {
-                    let d = Dirent::parse(&self.core.mmap, off as usize)?;
+                    let d = self.dirent(off)?;
                     return Ok(Entry {
                         archive: self.clone(),
                         url_index: mid,
@@ -634,16 +737,15 @@ impl Archive {
                 let mid = lo + (hi - lo) / 2;
                 let url_idx = listing[mid];
                 let off = self.url_pointer(url_idx)?;
-                let (d_ns, d_title) = Dirent::title_key_at(&self.core.mmap, off as usize)?;
-                let cmp = match ns.cmp(&d_ns) {
-                    Ordering::Equal => title.cmp(d_title),
-                    other => other,
-                };
+                let cmp = self.core.storage.parse(off, |buf| {
+                    let (d_ns, d_key) = Dirent::title_key_at(buf, 0)?;
+                    Ok(ns.cmp(&d_ns).then_with(|| title.cmp(d_key)))
+                })?;
                 match cmp {
                     Ordering::Less => hi = mid,
                     Ordering::Greater => lo = mid + 1,
                     Ordering::Equal => {
-                        let d = Dirent::parse(&self.core.mmap, off as usize)?;
+                        let d = self.dirent(off)?;
                         return Ok(Entry {
                             archive: self.clone(),
                             url_index: url_idx,
@@ -662,7 +764,7 @@ impl Archive {
         }
         for i in 0..n {
             let off = self.url_pointer(i)?;
-            let d = Dirent::parse(&self.core.mmap, off as usize)?;
+            let d = self.dirent(off)?;
             if d.namespace() == ns && d.title() == title {
                 return Ok(Entry {
                     archive: self.clone(),
@@ -709,11 +811,10 @@ impl Archive {
             let mid = lo + (hi - lo) / 2;
             let url_idx = listing[mid];
             let off = self.url_pointer(url_idx)?;
-            let (d_ns, d_title) = Dirent::title_key_at(&self.core.mmap, off as usize)?;
-            let cmp = match d_ns.cmp(&ns) {
-                Ordering::Equal => d_title.as_bytes().cmp(key),
-                other => other,
-            };
+            let cmp = self.core.storage.parse(off, |buf| {
+                let (d_ns, title) = Dirent::title_key_at(buf, 0)?;
+                Ok(d_ns.cmp(&ns).then_with(|| title.as_bytes().cmp(key)))
+            })?;
             if cmp.is_lt() {
                 lo = mid + 1;
             } else {
@@ -766,10 +867,14 @@ impl Archive {
             let Ok(off) = self.url_pointer(i) else {
                 continue;
             };
-            let Ok((_, url)) = Dirent::key_at(&self.core.mmap, off as usize) else {
+            let Ok(url) = self
+                .core
+                .storage
+                .parse(off, |buf| Ok(Dirent::key_at(buf, 0)?.1.to_owned()))
+            else {
                 continue;
             };
-            out.push(url.to_string());
+            out.push(url);
         }
         out
     }
@@ -944,7 +1049,8 @@ impl Archive {
             while lo < hi {
                 let mid = lo + (hi - lo) / 2;
                 let off = self.url_pointer(mid).unwrap_or(0);
-                let d = Dirent::parse(&self.core.mmap, off as usize)
+                let d = self
+                    .dirent(off)
                     .ok()
                     .map(|d| (d.namespace(), d.url().to_string()));
                 let cmp = match d {
@@ -1034,13 +1140,43 @@ impl Archive {
 
     // ---- internal helpers ----
 
-    fn pointer_table(&self, pos: u64, count: u32, width: usize) -> Result<&[u8]> {
-        let start = usize::try_from(pos).map_err(|_| Error::Truncated(pos))?;
-        let length = (count as usize)
-            .checked_mul(width)
-            .ok_or(Error::Truncated(pos))?;
-        let end = start.checked_add(length).ok_or(Error::Truncated(pos))?;
-        self.core.mmap.get(start..end).ok_or(Error::Truncated(pos))
+    fn dirent(&self, pos: u64) -> Result<Dirent> {
+        self.core.storage.parse(pos, |buf| Dirent::parse(buf, 0))
+    }
+
+    fn table_range(&self, pos: u64, count: u32, width: u64) -> Result<Range<u64>> {
+        self.core.storage.range(pos, u64::from(count) * width)
+    }
+
+    fn pointer(&self, pos: u64, count: u32, idx: u32) -> Result<u64> {
+        self.table_range(pos, count, 8)?;
+        self.core
+            .storage
+            .parse(pos + u64::from(idx) * 8, |buf| raw::u64_at(buf, 0))
+    }
+
+    fn read_table<T, const WIDTH: usize>(
+        &self,
+        pos: u64,
+        count: u32,
+        decode: fn([u8; WIDTH]) -> T,
+    ) -> Result<Vec<T>> {
+        let range = self.table_range(pos, count, WIDTH as u64)?;
+        let mut reader = self.core.storage.reader(range);
+        let mut values = Vec::new();
+        values
+            .try_reserve_exact(count as usize)
+            .map_err(io::Error::other)?;
+        let mut block = [0; 8192];
+        let mut remaining = count as usize;
+        while remaining != 0 {
+            let n = remaining.min(block.len() / WIDTH);
+            let bytes = &mut block[..n * WIDTH];
+            reader.read_exact(bytes)?;
+            values.extend(bytes.as_chunks::<WIDTH>().0.iter().copied().map(decode));
+            remaining -= n;
+        }
+        Ok(values)
     }
 
     fn url_pointer(&self, idx: u32) -> Result<u64> {
@@ -1048,8 +1184,7 @@ impl Archive {
         if idx >= n {
             return Err(Error::BadUrlIndex(idx, n));
         }
-        let table = self.pointer_table(self.core.header.url_ptr_pos, n, 8)?;
-        raw::u64_at(table, idx as usize * 8)
+        self.pointer(self.core.header.url_ptr_pos, n, idx)
     }
 
     fn cluster_pointer(&self, idx: u32) -> Result<u64> {
@@ -1057,8 +1192,7 @@ impl Archive {
         if idx >= n {
             return Err(Error::BadClusterIndex(idx, n));
         }
-        let table = self.pointer_table(self.core.header.cluster_ptr_pos, n, 8)?;
-        raw::u64_at(table, idx as usize * 8)
+        self.pointer(self.core.header.cluster_ptr_pos, n, idx)
     }
 
     /// Public access to a decoded cluster by its index. The cluster is cached
@@ -1069,8 +1203,7 @@ impl Archive {
 
     /// Validate that cluster `idx` decodes and its blob-offset table is
     /// self-consistent, without touching the shared cache. Uncompressed
-    /// clusters are checked against the offset table in place (no copy
-    /// of the possibly multi-GB payload out of the mmap); compressed
+    /// clusters stream through their offset tables without loading blob data; compressed
     /// clusters are decoded once and every blob range walked.
     pub fn validate_cluster(&self, idx: u32) -> Result<()> {
         self.validate_cluster_references(idx, &[])
@@ -1080,14 +1213,16 @@ impl Archive {
     /// Uncompressed payloads are checked in place; compressed payloads are
     /// decoded once, without populating the archive cache.
     pub fn validate_cluster_references(&self, idx: u32, blobs: &[u32]) -> Result<()> {
-        let raw = self.cluster_raw(idx)?;
-        if crate::cluster::validate_raw_offsets(raw)? {
+        let range = self.cluster_byte_range(idx)?;
+        if let Some(offsets) = self.raw_offsets(&range)? {
+            let mut reader = self.core.storage.reader(range.start + 1..range.end);
+            offsets.validate(&mut reader)?;
             for &blob in blobs {
-                crate::cluster::raw_blob_range(raw, blob)?;
+                offsets.check_index(blob)?;
             }
             return Ok(());
         }
-        let c = Cluster::parse(raw)?;
+        let c = self.cluster_uncached(idx)?;
         for &blob in blobs {
             c.blob_range(blob)?;
         }
@@ -1104,21 +1239,20 @@ impl Archive {
     /// + `lseek` without copying any bytes.
     pub fn blob_direct_access(&self, cluster_idx: u32, blob_idx: u32) -> Result<DirectAccess> {
         let cluster_range = self.cluster_byte_range(cluster_idx)?;
-        // Answer straight from the on-disk bytes: the info byte gives the
-        // compression id, and for uncompressed clusters the blob-offset
-        // table is read in place from the mmap. Going through
-        // `self.cluster` here would copy (and cache) the entire payload —
-        // multi-GB for the conventionally-uncompressed Xapian index
-        // clusters — just to answer an offset/size query.
-        let raw = self.cluster_raw(cluster_idx)?;
-        match crate::cluster::raw_blob_range(raw, blob_idx)? {
-            Some(r) => Ok(DirectAccess {
-                is_direct: true,
-                // The cluster's payload starts immediately after the
-                // 1-byte info byte at the start of the on-disk cluster.
-                file_offset: cluster_range.start + 1 + r.start as u64,
-                size: (r.end - r.start) as u64,
-            }),
+        let offsets = self.raw_offsets(&cluster_range)?;
+        match offsets {
+            Some(offsets) => {
+                let r = offsets.blob_range(blob_idx, |at| {
+                    self.offset_at(cluster_range.start + 1 + at, offsets.width())
+                })?;
+                Ok(DirectAccess {
+                    is_direct: true,
+                    // The cluster's payload starts immediately after the
+                    // 1-byte info byte at the start of the on-disk cluster.
+                    file_offset: cluster_range.start + 1 + r.start,
+                    size: r.end - r.start,
+                })
+            }
             None => Ok(DirectAccess {
                 is_direct: false,
                 file_offset: 0,
@@ -1149,26 +1283,73 @@ impl Archive {
     /// `idx` by `cluster_pointer(idx + 1)` would corrupt reads of any
     /// out-of-order cluster. The sorted offset list is built once per
     /// archive and shared.
-    fn cluster_slice_end(&self, start: u64) -> Result<u64> {
-        let table =
-            self.pointer_table(self.core.header.cluster_ptr_pos, self.cluster_count(), 8)?;
-        let offs = self.core.sorted_cluster_offsets.get_or_init(|| {
-            let mut v: Vec<u64> = table
-                .as_chunks::<8>()
-                .0
-                .iter()
-                .copied()
-                .map(u64::from_le_bytes)
-                .collect();
-            v.sort_unstable();
-            v
-        });
+    fn cluster_slice_end(&self, idx: u32, start: u64) -> Result<u64> {
+        let offs = self.core.sorted_cluster_offsets.get_or_try_init(|| {
+            let mut offsets = self.read_table(
+                self.core.header.cluster_ptr_pos,
+                self.cluster_count(),
+                u64::from_le_bytes,
+            )?;
+            offsets.sort_unstable();
+            Ok(offsets)
+        })?;
         let i = offs.partition_point(|&o| o <= start);
         let boundary = self.cluster_region_boundary_after(start);
-        Ok(offs
+        let end = offs
             .get(i)
             .copied()
-            .map_or(boundary, |next| next.min(boundary)))
+            .map_or(boundary, |next| next.min(boundary));
+        let title = self.header().title_ptr_pos;
+        if start >= title || end <= title {
+            return Ok(end);
+        }
+        if let Some(&(cached_idx, end)) = self.core.title_boundary.get() {
+            if cached_idx == idx {
+                return Ok(end);
+            }
+        }
+        let end = self.title_table_boundary(idx, start..end, title)?;
+        let _ = self.core.title_boundary.set((idx, end));
+        Ok(end)
+    }
+
+    // Some writers expose the full v0 listing both as a blob and through
+    // the header. A header pointer to that blob is inside its cluster.
+    fn title_table_boundary(&self, idx: u32, range: Range<u64>, title: u64) -> Result<u64> {
+        for name in ["listing/titleOrdered/v0", "listing/titleOrdered"] {
+            let entry = match self.entry_by_ns_path(NS_INDEX, name) {
+                Ok(entry) => entry,
+                Err(Error::EntryNotFound) => continue,
+                Err(err) => return Err(err),
+            };
+            let Dirent::Article(article) = entry.dirent() else {
+                continue;
+            };
+            if article.cluster != idx {
+                continue;
+            }
+            let Some(offsets) = self.raw_offsets(&range)? else {
+                continue;
+            };
+            let body = range.start + 1;
+            let width = offsets.width();
+            let blob = offsets.blob_range(article.blob, |at| self.offset_at(body + at, width))?;
+            if body + blob.start == title
+                && blob.end - blob.start == u64::from(self.entry_count()) * 4
+            {
+                // The payload ends at the final value in its offset table.
+                let first = self.offset_at(body, width)?;
+                if first < width || first > range.end - body || !first.is_multiple_of(width) {
+                    return Err(Error::Truncated(first));
+                }
+                let last = self.offset_at(body + (first - width), width)?;
+                if last < blob.end || last > range.end - body {
+                    return Err(Error::Truncated(last));
+                }
+                return Ok(body + last);
+            }
+        }
+        Ok(title)
     }
 
     /// Nearest header-table / checksum / EOF position after `start` —
@@ -1180,7 +1361,7 @@ impl Archive {
         } else {
             self.core.file_len
         };
-        [h.url_ptr_pos, h.title_ptr_pos, h.cluster_ptr_pos, eof]
+        [h.url_ptr_pos, h.cluster_ptr_pos, eof]
             .into_iter()
             .filter(|&p| p > start)
             .min()
@@ -1192,32 +1373,70 @@ impl Archive {
     /// takes up in the file.
     pub fn cluster_byte_range(&self, idx: u32) -> Result<std::ops::Range<u64>> {
         let start = self.cluster_pointer(idx)?;
-        let end = self.cluster_slice_end(start)?;
+        let end = self.cluster_slice_end(idx, start)?;
         if end <= start || end > self.core.file_len {
             return Err(Error::Truncated(end));
         }
         Ok(start..end)
     }
 
-    /// Raw on-disk bytes of cluster `idx` (info byte included), bounded
-    /// by the next cluster in file order.
-    fn cluster_raw(&self, idx: u32) -> Result<&[u8]> {
-        let range = self.cluster_byte_range(idx)?;
-        Ok(&self.core.mmap[range.start as usize..range.end as usize])
+    fn offset_at(&self, pos: u64, width: u64) -> Result<u64> {
+        self.core.storage.parse(pos, |buf| {
+            if width == 8 {
+                raw::u64_at(buf, 0)
+            } else {
+                raw::u32_at(buf, 0).map(u64::from)
+            }
+        })
+    }
+
+    fn raw_offsets(&self, range: &Range<u64>) -> Result<Option<RawOffsets>> {
+        let info = self
+            .core
+            .storage
+            .parse(range.start, |buf| raw::u8_at(buf, 0))?;
+        RawOffsets::open(info, range.end - range.start - 1, |width| {
+            self.offset_at(range.start + 1, width)
+        })
     }
 
     /// Decompress a cluster *without* touching the cache. Useful for parallel
     /// scans where each cluster is read exactly once and caching would only
     /// waste memory + add Mutex contention.
     pub fn cluster_uncached(&self, idx: u32) -> Result<Cluster> {
-        Cluster::parse(self.cluster_raw(idx)?)
+        self.read_cluster(idx, None)
+    }
+
+    /// Read without caching, enforcing the caller's stored, output and codec
+    /// limits even if another caller already cached a less restrictive result.
+    pub fn cluster_with_limits(
+        &self,
+        idx: u32,
+        limits: crate::ClusterReadLimits,
+    ) -> Result<Cluster> {
+        self.read_cluster(idx, Some(limits))
+    }
+
+    fn read_cluster(&self, idx: u32, limits: Option<crate::ClusterReadLimits>) -> Result<Cluster> {
+        let range = self.cluster_byte_range(idx)?;
+        let len = range.end - range.start;
+        let limits = match (self.core.cluster_limits, limits) {
+            (Some(a), Some(b)) => Some(crate::ClusterReadLimits {
+                max_stored_bytes: a.max_stored_bytes.min(b.max_stored_bytes),
+                max_decoded_bytes: a.max_decoded_bytes.min(b.max_decoded_bytes),
+                xz_memory_bytes: a.xz_memory_bytes.min(b.xz_memory_bytes),
+                zstd_window_log: a.zstd_window_log.min(b.zstd_window_log),
+            }),
+            (a, b) => a.or(b),
+        };
+        Cluster::read(self.core.storage.reader(range), len, limits)
     }
 
     fn load_cluster(&self, idx: u32) -> Result<Arc<Cluster>> {
         if let Some(c) = self.core.cluster_cache.lock().unwrap().get(idx) {
             return Ok(c);
         }
-        let cluster = Arc::new(Cluster::parse(self.cluster_raw(idx)?)?);
+        let cluster = Arc::new(self.cluster_uncached(idx)?);
         self.core
             .cluster_cache
             .lock()
@@ -1259,7 +1478,7 @@ impl Archive {
     // Each `check_*` returns `Ok(true)` for a clean archive, `Ok(false)`
     // for a structural defect, and `Err(_)` only for a read failure
     // that prevents the check from running at all (truncated header,
-    // unreadable mmap, …). `Ok(false)` means "we read the bytes; they
+    // unreadable file, …). `Ok(false)` means "we read the bytes; they
     // don't satisfy this invariant" — actionable for `zimcheck`-style
     // tools. The set is intentionally fine-grained so callers (the
     // shim's libzim-shaped `validate()` entry point being the
@@ -1278,7 +1497,7 @@ impl Archive {
             if off >= file_len {
                 return Ok(false);
             }
-            if Dirent::parse(&self.core.mmap, off as usize).is_err() {
+            if self.dirent(off).is_err() {
                 return Ok(false);
             }
         }
@@ -1291,19 +1510,17 @@ impl Archive {
     /// lookup on the archive.
     pub fn check_dirent_order(&self) -> Result<bool> {
         let n = self.core.header.entry_count;
-        // `key_at` borrows from the mmap, so the previous key can be held
-        // across iterations without a per-dirent String allocation.
-        let mut prev: Option<(u8, &str)> = None;
+        let mut previous = None;
         for i in 0..n {
             let off = self.url_pointer(i)?;
-            let (ns, url) = Dirent::key_at(&self.core.mmap, off as usize)?;
-            if let Some((prev_ns, prev_url)) = prev {
-                let cmp = prev_ns.cmp(&ns).then_with(|| prev_url.cmp(url));
-                if cmp.is_gt() {
-                    return Ok(false);
-                }
+            let key = self.core.storage.parse(off, |buf| {
+                let (ns, url) = Dirent::key_at(buf, 0)?;
+                Ok((ns, url.to_owned()))
+            })?;
+            if previous.as_ref().is_some_and(|prev| prev > &key) {
+                return Ok(false);
             }
-            prev = Some((ns, url));
+            previous = Some(key);
         }
         Ok(true)
     }
@@ -1339,9 +1556,9 @@ impl Archive {
             return Ok(false);
         }
         // Bound allocation by the real URL table, not an unchecked header count.
-        self.pointer_table(self.core.header.url_ptr_pos, self.entry_count(), 8)?;
+        self.table_range(self.core.header.url_ptr_pos, self.entry_count(), 8)?;
         let mut seen = vec![false; self.entry_count() as usize];
-        let mut prev: Option<(u8, &str)> = None;
+        let mut prev = None;
         for &url_idx in listing {
             let Some(seen) = seen.get_mut(url_idx as usize) else {
                 return Ok(false);
@@ -1350,8 +1567,12 @@ impl Archive {
                 return Ok(false);
             }
             let off = self.url_pointer(url_idx)?;
-            let key = Dirent::title_key_at(&self.core.mmap, off as usize)?;
-            if (subset && key.0 != NS_CONTENT_NEW) || prev.is_some_and(|prev| prev > key) {
+            let key = self.core.storage.parse(off, |buf| {
+                let (ns, title) = Dirent::title_key_at(buf, 0)?;
+                Ok((ns, title.to_owned()))
+            })?;
+            if (subset && key.0 != NS_CONTENT_NEW) || prev.as_ref().is_some_and(|prev| prev > &key)
+            {
                 return Ok(false);
             }
             prev = Some(key);
@@ -1384,7 +1605,7 @@ impl Archive {
         let mime_count = self.core.mimes.len();
         for i in 0..n {
             let off = self.url_pointer(i)?;
-            if let Dirent::Article(a) = Dirent::parse(&self.core.mmap, off as usize)? {
+            if let Dirent::Article(a) = self.dirent(off)? {
                 // Reserved mimetype values 0xFFFE / 0xFFFD (linktarget,
                 // deletedentry) are out-of-list by design; treat them
                 // as legal so legacy archives that still carry them
@@ -1619,8 +1840,40 @@ impl Item {
 
     /// Total decompressed size of the underlying blob in bytes.
     pub fn size(&self) -> Result<u64> {
+        let direct = self
+            .archive
+            .blob_direct_access(self.cluster_index(), self.blob_index())?;
+        if direct.is_direct {
+            return Ok(direct.size);
+        }
         let blob = self.get_data()?;
         Ok(blob.size() as u64)
+    }
+
+    /// Read at a byte offset within the item, returning zero at or beyond
+    /// its end. Uncompressed items read directly from the open archive file.
+    /// Compressed items use the shared decompressed cluster cache.
+    pub fn read_at(&self, offset: u64, buf: &mut [u8]) -> Result<usize> {
+        if buf.is_empty() {
+            return Ok(0);
+        }
+        let direct = self
+            .archive
+            .blob_direct_access(self.cluster_index(), self.blob_index())?;
+        if direct.is_direct {
+            if offset >= direct.size {
+                return Ok(0);
+            }
+            let length = (direct.size - offset).min(buf.len() as u64) as usize;
+            return self
+                .archive
+                .read_at(direct.file_offset + offset, &mut buf[..length]);
+        }
+        let blob = self.get_data()?;
+        if offset >= blob.size() as u64 {
+            return Ok(0);
+        }
+        Ok((&blob.data()[offset as usize..]).read(buf)?)
     }
 
     // ---- ergonomic content accessors ----
@@ -1665,37 +1918,9 @@ impl Item {
         })
     }
 
-    /// Pre-fault the OS page cache for this item's bytes. Designed for
-    /// the libzim-shim P7 scenario: the shim hands Xapian a fresh fd
-    /// at the offset of the embedded Xapian DB, Xapian then issues
-    /// eager DB-validation reads scattered across the multi-GB DB. On
-    /// a cold page cache every one of those reads is a disk seek —
-    /// the 12-second hang on first `/search` after kiwix-serve restart
-    /// on the 48 GB Wikipedia ZIM. The shim's `F_RDAHEAD=0` /
-    /// `POSIX_FADV_RANDOM` mitigation moves the needle by only ~10 %
-    /// because madvise/fadvise hints don't influence Xapian's own
-    /// eager reads.
-    ///
-    /// This function:
-    /// 1. Calls `madvise(MADV_WILLNEED)` on the item's region to ask
-    ///    the kernel to start async read-ahead, then
-    /// 2. Touches one byte per 4 KB page to force synchronous
-    ///    fault-in.
-    ///
-    /// On return, every page in the region is resident — subsequent
-    /// reads (whether through zimru's existing mmap or through any
-    /// other fd onto the same file the OS page cache is keyed by
-    /// inode, not mmap region) hit cache. Cost is O(region size) of
-    /// disk I/O paid once.
-    ///
-    /// Direct-access only: silently no-ops on items in compressed
-    /// clusters (the page-fault game only makes sense for
-    /// uncompressed regions where the on-disk bytes are the same
-    /// bytes the consumer will read).
-    ///
-    /// Suitable for kiwix-serve to call at startup (synchronous,
-    /// blocks server boot but eliminates the first-search hang) or
-    /// in a background thread (concurrent with other init).
+    /// Warm the OS page cache by reading this uncompressed item's byte
+    /// range sequentially with a bounded buffer. Compressed items are skipped.
+    /// The operating system determines how long warmed pages stay resident.
     pub fn warmup(&self) -> Result<()> {
         let direct = self
             .archive
@@ -1703,26 +1928,15 @@ impl Item {
         if !direct.is_direct {
             return Ok(());
         }
-        let offset = direct.file_offset as usize;
-        let size = direct.size as usize;
-        let mmap = &self.archive.core.mmap;
-        if offset.saturating_add(size) > mmap.len() {
-            return Err(Error::Truncated((offset + size) as u64));
-        }
-        // Best-effort kernel hint — async read-ahead. Errors are
-        // non-fatal: the page-touch below still forces fault-in.
-        let _ = mmap.advise_range(Advice::WillNeed, offset, size);
-        // Synchronous fault-in: one byte per page is enough to
-        // trigger the kernel to read the whole page.
-        const PAGE: usize = 4096;
-        let region = &mmap[offset..offset + size];
-        let mut acc: u64 = 0;
-        let mut i = 0;
-        while i < region.len() {
-            acc = acc.wrapping_add(region[i] as u64);
-            i += PAGE;
-        }
-        std::hint::black_box(acc);
+        let range = self
+            .archive
+            .core
+            .storage
+            .range(direct.file_offset, direct.size)?;
+        io::copy(
+            &mut self.archive.core.storage.reader(range),
+            &mut io::sink(),
+        )?;
         Ok(())
     }
 

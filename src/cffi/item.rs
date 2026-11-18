@@ -116,13 +116,10 @@ pub unsafe extern "C" fn zimru_item_size(
 /// Direct-access info for an item. POD struct populated by
 /// [`zimru_item_direct_access`]; mirrors [`crate::DirectAccess`].
 ///
-/// When `is_direct` is `true`, callers can `pread()` or `mmap()` the
-/// item's bytes directly from the on-disk ZIM file at `file_offset`
-/// for `size` bytes — no decompression, no copy. The standard ZIM
-/// convention is to store fulltext / suggestion / Xapian indexes in
-/// uncompressed clusters precisely so consumers can hand `libxapian`
-/// an `int fd` + `lseek` instead of materialising the database in
-/// memory or in a temp file.
+/// When `is_direct` is `true`, the range is relative to the original
+/// archive source. Read it using `zimru_archive_read_at` on that archive or
+/// `zimru_item_read_at` on this item. Reopening the pathname after an archive
+/// replacement may select a different file.
 ///
 /// When `is_direct` is `false`, the item lives in a compressed
 /// cluster; fall back to [`zimru_item_get_data`] for normal access.
@@ -203,6 +200,25 @@ pub struct zimru_blob_view_t {
     pub _pin: *const c_void,
 }
 
+/// Read item content starting at the item-relative byte `offset`, including
+/// items in compressed clusters. Writes up to `len` bytes to `dst` and the
+/// count to `out_read`. The count may be short, and is zero at EOF.
+/// On failure returns false, sets the optional error, and reports the number
+/// of bytes already copied. `dst` may be NULL when `len` is zero.
+#[no_mangle]
+pub unsafe extern "C" fn zimru_item_read_at(
+    it: *const zimru_item_t,
+    offset: u64,
+    dst: *mut u8,
+    len: usize,
+    out_read: *mut usize,
+    err: *mut *mut zimru_error_t,
+) -> bool {
+    super::read::copy_read_at(it, offset, dst, len, out_read, err, |it, pos, buf| {
+        it.inner.read_at(pos, buf)
+    })
+}
+
 /// Populate `out` with a borrowed view of the item's bytes plus a pin
 /// handle that keeps them alive. Returns `false` with `*err` set on
 /// any failure (cluster decode error, bad blob index, NULL inputs).
@@ -210,6 +226,10 @@ pub struct zimru_blob_view_t {
 /// [`zimru_item_get_data`] — costs one `Arc::clone` (refcount bump,
 /// no allocation) per call. The pin must be released exactly once
 /// with [`zimru_blob_view_release`].
+/// Initialize a new view to all zeros, release it before repopulating it,
+/// and keep the sole owning instance. A struct copy does not acquire a pin.
+/// A failed call leaves the destination unchanged. A successful view can
+/// outlive its item and archive.
 #[no_mangle]
 pub unsafe extern "C" fn zimru_item_blob_view(
     it: *const zimru_item_t,
@@ -238,24 +258,10 @@ pub unsafe extern "C" fn zimru_item_blob_view(
     true
 }
 
-/// Pre-fault the OS page cache for this item's on-disk bytes. Issues
-/// `madvise(MADV_WILLNEED)` on the item's region and touches one byte
-/// per 4 KB page to force synchronous fault-in. After return, every
-/// page is resident; subsequent reads (including reads issued through
-/// a different fd onto the same file — the OS page cache is keyed by
-/// inode) hit cache instead of disk.
-///
-/// Designed for the libzim-shim P7 scenario: kiwix-serve hosting a
-/// multi-GB Wikipedia hands Xapian a fd at the embedded Xapian-DB
-/// offset, Xapian issues eager DB-validation reads scattered across
-/// the DB, and on a cold page cache the first user `/search`
-/// blocks for ~12 seconds. Calling this at server start (or in a
-/// background thread concurrent with other init) shifts the disk-I/O
-/// cost off the first user-facing search.
-///
-/// No-op on items in compressed clusters (the page-fault game only
-/// makes sense for direct-access regions). Returns `false` with `*err`
-/// set on a NULL item or unrecoverable lookup failure.
+/// Warm the OS page cache by reading this uncompressed item's region
+/// sequentially from the original archive source. The operating system
+/// controls how long the pages stay resident. Compressed items are skipped.
+/// Returns false with an error on a NULL item or a read failure.
 #[no_mangle]
 pub unsafe extern "C" fn zimru_item_warmup(
     it: *const zimru_item_t,

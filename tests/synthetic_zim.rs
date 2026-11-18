@@ -5,7 +5,6 @@
 
 use std::io::Write;
 
-use md5::{Digest, Md5};
 use zimru::{Archive, Error};
 
 const MAGIC: u32 = 0x44D495A;
@@ -191,9 +190,9 @@ fn build_zim(
 
     // Checksum (16 bytes md5 of everything before)
     if with_checksum {
-        let mut h = Md5::new();
-        h.update(&out);
-        let digest: [u8; 16] = h.finalize().into();
+        let mut h = md5::Context::new();
+        h.consume(&out);
+        let digest: [u8; 16] = h.finalize().0;
         out.extend_from_slice(&digest);
     }
 

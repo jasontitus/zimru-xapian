@@ -15,7 +15,6 @@
 use std::io::{self, Write};
 use std::process::ExitCode;
 
-use md5::Digest as _;
 use zimru::{Archive, Error};
 
 fn main() -> ExitCode {
@@ -226,11 +225,11 @@ fn cmd_readall(args: &[String]) -> Result<(), Error> {
     let mut redirects = 0u64;
     let mut total_bytes: u64 = 0;
     let mut hasher = if hash_md5 {
-        Some(md5::Md5::new())
+        Some(md5::Context::new())
     } else {
         None
     };
-    let mut content = content_md5.then(md5::Md5::new);
+    let mut content = content_md5.then(md5::Context::new);
     let mut content_entries = 0u64;
     for i in 0..n {
         let entry = arc.entry_by_url_index(i)?;
@@ -256,7 +255,7 @@ fn cmd_readall(args: &[String]) -> Result<(), Error> {
                 };
                 hash_field(h, canonical_path(&entry).as_bytes());
                 hash_field(h, entry.title().as_bytes());
-                h.update([u8::from(entry.is_redirect())]);
+                h.consume([u8::from(entry.is_redirect())]);
                 if entry.is_redirect() {
                     hash_field(h, canonical_path(&entry.get_redirect_entry()?).as_bytes());
                 } else {
@@ -275,7 +274,7 @@ fn cmd_readall(args: &[String]) -> Result<(), Error> {
         let blob = item.get_data()?;
         total_bytes += blob.size() as u64;
         if let Some(h) = hasher.as_mut() {
-            h.update(blob.data());
+            h.consume(blob.data());
         }
     }
     let elapsed = start.elapsed();
@@ -291,12 +290,12 @@ fn cmd_readall(args: &[String]) -> Result<(), Error> {
             println!("throughput_MBs: {:.2}", mb / secs);
         }
         if let Some(h) = hasher {
-            let d: [u8; 16] = h.finalize().into();
+            let d: [u8; 16] = h.finalize().0;
             println!("blob_md5:       {}", hex_lower(&d));
         }
     }
     if let Some(h) = content {
-        let digest: [u8; 16] = h.finalize().into();
+        let digest: [u8; 16] = h.finalize().0;
         // Explicit requested digests are machine-readable even with --quiet.
         // This compares user entries, not regenerated M/X/W metadata or layout.
         println!("content_entries: {content_entries}");
@@ -305,9 +304,9 @@ fn cmd_readall(args: &[String]) -> Result<(), Error> {
     Ok(())
 }
 
-fn hash_field(h: &mut md5::Md5, value: &[u8]) {
-    h.update((value.len() as u64).to_le_bytes());
-    h.update(value);
+fn hash_field(h: &mut md5::Context, value: &[u8]) {
+    h.consume((value.len() as u64).to_le_bytes());
+    h.consume(value);
 }
 
 fn cmd_mimes(args: &[String]) -> Result<(), Error> {

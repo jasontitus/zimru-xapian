@@ -4,8 +4,6 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use md5::{Digest, Md5};
-
 struct Workspace(PathBuf);
 
 impl Workspace {
@@ -117,7 +115,7 @@ impl Fixture {
 
     fn save(&mut self, path: &Path) {
         let checksum = self.bytes.len() - 16;
-        let digest = Md5::digest(&self.bytes[..checksum]);
+        let digest = md5::compute(&self.bytes[..checksum]).0;
         self.bytes[checksum..].copy_from_slice(&digest);
         fs::write(path, &self.bytes).unwrap();
     }

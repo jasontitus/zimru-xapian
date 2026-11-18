@@ -29,6 +29,11 @@ int main(int argc, char **argv) {
     if (!a) {
         DIE("open failed: %s", err ? zimru_error_message(err) : "no error");
     }
+    uint8_t magic[4];
+    size_t copied = 0;
+    if (!zimru_archive_read_at(a, 0, magic, sizeof(magic), &copied, &err)
+        || copied != sizeof(magic) || memcmp(magic, "ZIM\x04", 4) != 0)
+        DIE("raw archive read returned the wrong header");
 
     /* basic shape */
     uint32_t entry_count = zimru_archive_entry_count(a);
@@ -106,6 +111,17 @@ int main(int argc, char **argv) {
         DIE("blob does not contain expected marker; first 32 bytes:");
     }
     fprintf(stderr, "blob len: %zu\n", len);
+    uint8_t tail[16];
+    if (len < 3 || !zimru_item_read_at(it, len - 3, tail, sizeof(tail), &copied, &err)
+        || copied != 3 || memcmp(tail, bytes + len - 3, 3) != 0)
+        DIE("partial compressed item read failed");
+    if (!zimru_item_read_at(it, len, tail, sizeof(tail), &copied, &err) || copied != 0)
+        DIE("item EOF read failed");
+    if (!zimru_item_read_at(it, 0, NULL, 0, &copied, &err) || copied != 0)
+        DIE("empty item read failed");
+    zimru_blob_view_t view = {0};
+    if (!zimru_item_blob_view(it, &view, &err) || view.size != len)
+        DIE("could not pin item content");
 
     /* metadata round-trip */
     size_t mlen = 0;
@@ -243,6 +259,10 @@ int main(int argc, char **argv) {
     if ((u1[8] & 0xc0) != 0x80) DIE("uuid variant nibbles != 10xx");
 
     zimru_archive_close(a);
+    if (memmem(view.data, view.size, "ZIMRU-OK", 8) == NULL)
+        DIE("pinned bytes lost after freeing item and archive");
+    zimru_blob_view_release(&view);
+    zimru_blob_view_release(&view);
 
     /* error path: open a nonexistent file */
     zimru_error_t *err2 = NULL;

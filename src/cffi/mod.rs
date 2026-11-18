@@ -28,6 +28,14 @@
 //! * **Ownership** — anything returned through an `*mut zimru_*_t` pointer
 //!   is owned by the caller and must be freed with the matching
 //!   `zimru_*_free` function.
+//! * **Threads** — independent live reader handles and shared read operations
+//!   may be used concurrently. Serialize all operations on one creator. A
+//!   free, close, or view release must wait for every user of that handle
+//!   and its borrowed pointers. Each call needs independent writable output.
+//! * **Pointers** — callers supply live, properly aligned handles of the
+//!   declared type and valid single-allocation input/output buffers. Inputs
+//!   stay readable and unchanged during the call. Writable outputs must be
+//!   exclusive and disjoint from handles and other arguments.
 //!
 //! The Rust API in [`crate::archive`] is unchanged; this module is purely
 //! an additional surface.
@@ -38,6 +46,7 @@ mod creator;
 mod entry;
 mod error;
 mod item;
+mod read;
 mod uuid;
 
 pub use archive::*;
@@ -47,3 +56,13 @@ pub use entry::*;
 pub use error::*;
 pub use item::*;
 pub use uuid::*;
+
+// C reader handles can be retained by one thread and read by others.
+const _: () = {
+    const fn require_send_sync<T: Send + Sync>() {}
+    require_send_sync::<zimru_archive_t>();
+    require_send_sync::<zimru_entry_t>();
+    require_send_sync::<zimru_item_t>();
+    require_send_sync::<zimru_blob_t>();
+    require_send_sync::<zimru_error_t>();
+};

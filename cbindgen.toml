@@ -16,6 +16,17 @@ header = """/*
  *   with zimru_error_free.
  * Ownership: anything returned via `*_t*` is owned by the caller and must
  *   be freed with the matching `*_free` function.
+ * Threads: live reader handles support concurrent reads. Serialize all
+ *   operations on the same creator. Before freeing or closing a handle,
+ *   or releasing a blob view, wait for all users of that handle and its
+ *   borrowed pointers. Each call needs separate writable output storage.
+ * Pointers: supply live handles of the declared type. C strings must be
+ *   NUL-terminated. Nonempty buffers must be within a single allocation
+ *   and at most PTRDIFF_MAX bytes. Inputs remain readable and unchanged
+ *   during the call. Writable pointers must be aligned for their type,
+ *   exclusive, and disjoint from handles and other arguments.
+ * Error slots: pass NULL to discard errors, or use an empty pointer slot.
+ *   Free an error and reset its slot to NULL before reusing it.
  */
 """
 include_guard = "ZIMRU_H"

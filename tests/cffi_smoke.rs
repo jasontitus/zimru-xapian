@@ -21,16 +21,16 @@ fn manifest_dir() -> PathBuf {
 }
 
 fn target_dir() -> PathBuf {
-    // Cargo emits the test build's cdylib beside the test executable.
-    // Prefer it over a potentially stale top-level `cargo build` artifact.
-    let exe = std::env::current_exe().expect("current_exe");
-    let deps = exe.parent().expect("test exe has no parent");
+    // Cargo may place a test in deps/ or under build/<crate>/<hash>/out/.
+    // The built CLI gives us the actual profile directory in either layout.
+    let profile = Path::new(env!("CARGO_BIN_EXE_zimru"))
+        .parent()
+        .expect("CLI executable has no parent");
+    let deps = profile.join("deps");
     if deps.join(dylib_name()).is_file() {
-        deps.to_path_buf()
+        deps
     } else {
-        deps.parent()
-            .expect("test exe not under target/<profile>/deps")
-            .to_path_buf()
+        profile.to_path_buf()
     }
 }
 
@@ -60,6 +60,17 @@ fn build_test_zim(out: &Path) {
     ));
     c.add_metadata("Title", "cffi smoke test");
     c.add_metadata("Language", "eng");
+    let direct_bytes: Vec<u8> = (0u8..=250).cycle().take(80_000).collect();
+    c.add_item(
+        Item::in_namespace(
+            b'X',
+            "read-test",
+            "",
+            "application/octet-stream",
+            direct_bytes,
+        )
+        .with_compress(false),
+    );
     c.write_to(out).expect("write test zim");
 }
 

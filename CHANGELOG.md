@@ -8,6 +8,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Security
+
+- Archive reads, writer checksums and post-write verification use the original
+  file handle. The optional `legacy-mmap` feature retains `Archive::from_mmap`.
+- Added per-archive admission and per-cluster decode limits, plus Rust and C
+  range reads for large uncompressed items. Upgraded `lru` to 0.19.
+- XZ encoding uses `lzma-rust2`. XZ decoding and both Zstd directions still
+  use native libraries. [Memory-safety review](docs/memory-safety-review.md)
 - `zimdump dump`: entry paths from the archive are sanitized (`..` and `.`
   segments dropped), closing a path traversal that let a crafted ZIM write
   files outside `--dir`.

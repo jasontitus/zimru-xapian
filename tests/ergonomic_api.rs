@@ -6,7 +6,6 @@
 
 use std::io::{Read, Write};
 
-use md5::{Digest, Md5};
 use zimru::{Archive, Error};
 
 const MAGIC: u32 = 0x44D495A;
@@ -230,9 +229,9 @@ fn build_test_zim() -> Vec<u8> {
     }
     out.extend_from_slice(&cluster);
 
-    let mut h = Md5::new();
-    h.update(&out);
-    let digest: [u8; 16] = h.finalize().into();
+    let mut h = md5::Context::new();
+    h.consume(&out);
+    let digest: [u8; 16] = h.finalize().0;
     out.extend_from_slice(&digest);
     out
 }

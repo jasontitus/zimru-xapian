@@ -1,58 +1,26 @@
-//! Portable I/O readahead / access-pattern hints.
-//!
-//! These wrap `posix_fadvise(2)` (Linux) and `fcntl(2)`'s
-//! `F_RDAHEAD` / `F_NOCACHE` (macOS) so callers can express access
-//! patterns the kernel can prefetch for, without depending on
-//! io_uring or any platform-specific async I/O surface.
-//!
-//! On platforms without an obvious analogue (e.g. Windows) the
-//! functions compile to no-ops — every call site must remain
-//! correct without the hint.
+//! Best-effort read-ahead hints. All callers must work without a hint.
 
 use std::fs::File;
 
-/// Hint that `file` is about to be read sequentially from start
-/// to finish. On Linux: `posix_fadvise(POSIX_FADV_SEQUENTIAL)`
-/// (doubles readahead, drops pages after they're touched). On
-/// macOS: `fcntl(F_RDAHEAD, 1)` (enables aggressive readahead).
-/// Best-effort — failures are silently ignored.
+/// Hint that the file will be read sequentially.
 pub fn hint_sequential(_file: &File) {
     #[cfg(target_os = "linux")]
-    {
-        use std::os::unix::io::AsRawFd;
-        unsafe {
-            libc::posix_fadvise(_file.as_raw_fd(), 0, 0, libc::POSIX_FADV_SEQUENTIAL);
-        }
-    }
+    let _ = rustix::fs::fadvise(_file, 0, None, rustix::fs::Advice::Sequential);
     #[cfg(target_os = "macos")]
-    {
-        use std::os::unix::io::AsRawFd;
-        unsafe {
-            libc::fcntl(_file.as_raw_fd(), libc::F_RDAHEAD, 1);
-        }
-    }
+    hint_will_need(_file);
 }
 
-/// Hint that `file`'s entire contents will be read soon.
-/// On Linux: `posix_fadvise(POSIX_FADV_WILLNEED)` — kernel kicks
-/// off async readahead now so the bytes are warm by the time the
-/// caller reads them. On macOS: same `F_RDAHEAD` path as
-/// [`hint_sequential`] (no separate "will need" flag, but
-/// `F_RDAHEAD` covers the prefetch case for sequential access).
-/// Best-effort.
+/// Prefetch file pages where the operating system exposes a suitable hint.
 pub fn hint_will_need(_file: &File) {
     #[cfg(target_os = "linux")]
-    {
-        use std::os::unix::io::AsRawFd;
-        unsafe {
-            libc::posix_fadvise(_file.as_raw_fd(), 0, 0, libc::POSIX_FADV_WILLNEED);
-        }
-    }
+    let _ = rustix::fs::fadvise(_file, 0, None, rustix::fs::Advice::WillNeed);
     #[cfg(target_os = "macos")]
-    {
-        use std::os::unix::io::AsRawFd;
-        unsafe {
-            libc::fcntl(_file.as_raw_fd(), libc::F_RDAHEAD, 1);
+    if let Ok(metadata) = _file.metadata() {
+        // Apple's advisory read uses a signed 32-bit size. Limit speculative
+        // read-ahead to the beginning of the file, even on large archives.
+        let bytes = metadata.len().min(1024 * 1024);
+        if bytes > 0 {
+            let _ = rustix::fs::fcntl_rdadvise(_file, 0, bytes);
         }
     }
 }

@@ -29,7 +29,6 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use md5::{Digest, Md5};
 use parking_lot::{Condvar, Mutex};
 
 use crate::cluster::Compression;
@@ -668,10 +667,10 @@ impl Creator {
     /// archive checksum; a collision can only cause a spurious duplicate
     /// rejection, never a missed one.
     fn entry_key_digest(namespace: u8, path: &str) -> [u8; 16] {
-        let mut h = Md5::new();
-        h.update([namespace]);
-        h.update(path.as_bytes());
-        h.finalize().into()
+        let mut h = md5::Context::new();
+        h.consume([namespace]);
+        h.consume(path.as_bytes());
+        h.finalize().0
     }
 
     fn check_entry_key(&self, namespace: u8, path: &str) -> Result<()> {
@@ -2720,63 +2719,46 @@ impl Streamer {
         self.file_mut().write_all(&final_header)?;
         self.file_mut().flush()?;
 
-        // 13. MD5 over [0, checksum_pos) by re-reading the now-final
-        //     file through a sequential-advised mmap — no read(2)
-        //     syscall loop, no bounce-buffer copies; the hasher
-        //     consumes page-cache bytes directly. Hashing what's on
-        //     disk (rather than a shadow hash of what we *meant* to
-        //     write) doubles as a write-integrity check.
+        // Hash the final on-disk bytes through the same open handle.
         let md5_phase = Instant::now();
-        let digest: [u8; 16] = {
-            let file = self.file_mut();
-            let mmap = unsafe { memmap2::Mmap::map(&*file)? };
-            #[cfg(unix)]
-            let _ = mmap.advise(memmap2::Advice::Sequential);
-            if (mmap.len() as u64) < checksum_pos {
-                return Err(Error::Io(std::io::Error::other(format!(
-                    "output truncated: {} bytes on disk, expected {}",
-                    mmap.len(),
-                    checksum_pos
-                ))));
-            }
-            let mut hasher = Md5::new();
-            hasher.update(&mmap[..checksum_pos as usize]);
-            hasher.finalize().into()
-        };
+        let file = self.file_mut();
+        file.seek(SeekFrom::Start(0))?;
+        crate::io_hints::hint_sequential(file);
+        let mut hash = md5::Context::new();
+        let count = std::io::copy(
+            &mut std::io::Read::take(&mut *file, checksum_pos),
+            &mut hash,
+        )?;
+        if count != checksum_pos {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::UnexpectedEof,
+                "output truncated while computing checksum",
+            )
+            .into());
+        }
+        let digest = hash.finalize().0;
         self.file_mut().seek(SeekFrom::Start(checksum_pos))?;
         self.file_mut().write_all(&digest)?;
         self.file_mut().flush()?;
         self.stats.md5_pass += md5_phase.elapsed();
 
-        // 14. Verify the just-written archive opens cleanly and
-        //     passes every structural check we have. This is the
-        //     reliability gate the user asked for: every successful
-        //     `finish_writing` returns only after the produced ZIM
-        //     reads back with sorted dirents, valid pointer tables,
-        //     resolvable mimetypes, and a matching MD5. Failure
-        //     here means our writer produced something we can't
-        //     read — surface that loudly rather than ship it.
-        //
-        //     The verify step is a single forward pass over the
-        //     file (mmap + zimru's checks); cost is sub-second on
-        //     small ZIMs, ~1-2 s per GB on big ZIMs.
-        let path = self.output_path.clone();
+        // Verify the same file we wrote even if its pathname is replaced.
+        let output = self.file.take().ok_or_else(|| {
+            std::io::Error::other("missing output handle during post-write verification")
+        })?;
         let started = self.started;
         let mut stats = std::mem::take(&mut self.stats);
-        // Drop our File handle before the Archive opens it — keeps
-        // ownership clean and avoids the verify path racing on a
-        // still-open writer fd.
         drop(self);
 
         let verify_phase = Instant::now();
-        verify_archive(&path)?;
+        let archive = crate::archive::Archive::from_file(output)?;
+        verify_archive(&archive)?;
         stats.verify_pass += verify_phase.elapsed();
 
         // Print only when the user explicitly asks via env var, so
         // routine cargo-test runs stay quiet.
         if std::env::var_os("ZIMRU_STATS").is_some() {
-            let output_size = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
-            stats.print_summary(started, output_size);
+            stats.print_summary(started, archive.file_len());
         }
         Ok(())
     }
@@ -2802,8 +2784,7 @@ impl Drop for Streamer {
 /// the milliseconds between the two passes — not worth a second
 /// full-file read on every build. `zimcheck -C` remains available
 /// for callers who want an explicit checksum pass.
-fn verify_archive(path: &Path) -> Result<()> {
-    let arc = crate::archive::Archive::open(path)?;
+fn verify_archive(arc: &crate::archive::Archive) -> Result<()> {
     type Check = dyn Fn(&crate::archive::Archive) -> Result<bool>;
     let checks: &[(&str, &Check)] = &[
         ("dirent_ptrs", &|a| a.check_dirent_ptrs()),
@@ -2813,7 +2794,7 @@ fn verify_archive(path: &Path) -> Result<()> {
         ("mimetypes", &|a| a.check_mimetypes()),
     ];
     for (name, check) in checks {
-        let ok = check(&arc).map_err(|e| {
+        let ok = check(arc).map_err(|e| {
             Error::Io(std::io::Error::other(format!(
                 "post-write verify: {name} failed during check: {e}"
             )))
@@ -3025,7 +3006,9 @@ fn encode_cluster(
             // append — skips the prepend-copy of the compressed body.
             let mut out = Vec::with_capacity(1 + payload_len / 4);
             out.push(4u8 | ext_bit);
-            let mut enc = xz2::write::XzEncoder::new(out, lvl);
+            let options = lzma_rust2::XzOptions::with_preset(lvl);
+            let mut enc = lzma_rust2::XzWriter::new(out, options)
+                .map_err(|e| Error::Decompression(format!("xz encoder: {e}")))?;
             enc.write_all(&header)?;
             for blob in blobs {
                 enc.write_all(blob)?;
@@ -3059,6 +3042,29 @@ fn default_uuid() -> [u8; 16] {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn native_xz_decoder_reads_writer_offsets_and_all_blobs() {
+        use std::io::Read as _;
+
+        let blobs = [Vec::new(), b"first".to_vec(), vec![b'z'; 100_000]];
+        let encoded = encode_cluster(&blobs, Compression::Xz, None).unwrap();
+        let (&cluster_info, xz) = encoded.split_first().unwrap();
+        assert_eq!(cluster_info, 4);
+        assert_eq!(xz[7], 4); // XZ stream flags select CRC64.
+        let mut decoded = Vec::new();
+        xz2::read::XzDecoder::new(xz)
+            .read_to_end(&mut decoded)
+            .unwrap();
+        let mut expected: Vec<u8> = [16_u32, 16, 21, 100_021]
+            .into_iter()
+            .flat_map(u32::to_le_bytes)
+            .collect();
+        for blob in blobs {
+            expected.extend_from_slice(&blob);
+        }
+        assert_eq!(decoded, expected);
+    }
 
     fn output_path(tag: &str) -> std::path::PathBuf {
         let stamp = std::time::SystemTime::now()

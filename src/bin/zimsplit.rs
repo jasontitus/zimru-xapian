@@ -8,8 +8,8 @@
 //! `--force` allows an indivisible region to exceed that limit; it never
 //! cuts a cluster or overwrites an existing output.
 
-use std::fs::{File, OpenOptions};
-use std::io::{Read, Write};
+use std::fs::OpenOptions;
+use std::io::Write;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
@@ -217,7 +217,6 @@ fn run(file: &str, prefix: &str, size: u64, force: bool) -> Result<(), Error> {
         }
     }
 
-    let mut input = File::open(file)?;
     let mut buf = vec![0u8; READ_BUF];
     let mut cleanup = OutputCleanup {
         paths: Vec::new(),
@@ -236,7 +235,9 @@ fn run(file: &str, prefix: &str, size: u64, force: bool) -> Result<(), Error> {
         let mut remaining = end - start;
         while remaining > 0 {
             let want = remaining.min(buf.len() as u64) as usize;
-            input.read_exact(&mut buf[..want])?;
+            if archive.read_at(end - remaining, &mut buf[..want])? != want {
+                return Err(std::io::Error::from(std::io::ErrorKind::UnexpectedEof).into());
+            }
             part.write_all(&buf[..want])?;
             remaining -= want as u64;
         }

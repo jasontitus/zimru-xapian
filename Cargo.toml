@@ -19,12 +19,14 @@ default = ["writer"]
 # Enable the ZIM file writer (`zimru::writer::Creator`) and the
 # `zimrecreate` / `zimwriterfs` binaries. With default features disabled
 # the crate is reader-only. flate2 backs `zimwriterfs -x/--inflateHtml`.
-writer = ["dep:flate2"]
+writer = ["dep:flate2", "dep:lzma-rust2"]
 # Compile the `extern "C"` API surface (`zimru::cffi`) and emit the
 # generated `include/zimru.h` from build.rs. Required when consuming
 # zimru as a `cdylib` / `staticlib` from C, C++, or other FFI callers.
 # Implies the `writer` feature so the C ABI exposes the Creator too.
-cffi = ["writer"]
+cffi = ["writer", "dep:cbindgen"]
+# Compatibility for callers that already hold a mapping and enforce its safety contract.
+legacy-mmap = ["dep:memmap2"]
 
 [lib]
 name = "zimru"
@@ -73,29 +75,41 @@ required-features = ["writer"]
 test = false
 
 [dependencies]
-memmap2 = "0.9"
+memmap2 = { version = "0.9", optional = true }
 zstd = { version = "0.13", default-features = false, features = ["zstdmt"] }
 xz2 = "0.1"
-md-5 = { version = "0.10", features = ["asm"] }
+lzma-rust2 = { version = "=0.25.0", optional = true, default-features = false, features = ["std", "xz", "encoder"] }
+md5 = "0.8.1"
 rayon = "1"
 thiserror = "2"
-lru = "0.12"
+lru = "0.19"
 # Poison-free locks for the writer byte budget and zimdump's shared state.
 parking_lot = "0.12"
 # Pure-Rust gzip (miniz_oxide backend) for `zimwriterfs --inflateHtml`.
 flate2 = { version = "1", default-features = false, features = ["rust_backend"], optional = true }
 
 [target.'cfg(unix)'.dependencies]
-# Used for portable I/O hints: posix_fadvise on Linux, fcntl(F_RDAHEAD)
-# on macOS. These capture io_uring-style readahead and page-cache
-# behaviour without requiring io_uring.
+# libc supplies the CLI signal constants. rustix handles fd-relative
+# extraction and platform-specific I/O hints.
 libc = "0.2"
+rustix = { version = "1.1", features = ["fs"] }
 
 [dev-dependencies]
 hex = "0.4"
-md-5 = { version = "0.10", features = ["asm"] }
 zstd = { version = "0.13", default-features = false, features = ["zstdmt"] }
 criterion = { version = "0.5", default-features = false, features = ["plotters", "cargo_bench_support"] }
+
+[[example]]
+name = "gen_raw_zim"
+required-features = ["writer"]
+
+[[example]]
+name = "gen_shuffled_zim"
+required-features = ["writer"]
+
+[[example]]
+name = "writer_bench"
+required-features = ["writer"]
 
 [[bench]]
 name = "get_entry_by_path"
@@ -113,10 +127,8 @@ harness = false
 required-features = []
 
 [build-dependencies]
-# Used only when the `cffi` feature is enabled (build.rs gates on the
-# CARGO_FEATURE_CFFI env var); kept unconditional because Cargo does not
-# support truly optional build-dependencies.
-cbindgen = { version = "0.27", default-features = false }
+# Header generation runs on the build host only for the optional C ABI.
+cbindgen = { version = "0.27", default-features = false, optional = true }
 
 [package.metadata.docs.rs]
 features = ["writer", "cffi"]

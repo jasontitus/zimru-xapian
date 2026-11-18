@@ -85,6 +85,16 @@ unsafe fn ptr_to_vec(data: *const u8, len: usize, err: *mut *mut zimru_error_t) 
         set_err(err, crate::Error::EntryNotFound);
         return None;
     }
+    if len > isize::MAX as usize {
+        set_err(
+            err,
+            crate::Error::Io(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "invalid input buffer",
+            )),
+        );
+        return None;
+    }
     Some(std::slice::from_raw_parts(data, len).to_vec())
 }
 
@@ -670,6 +680,16 @@ pub unsafe extern "C" fn zimru_creator_item_chunk(
     }
     if chunk.is_null() {
         set_err(err, crate::Error::EntryNotFound);
+        return false;
+    }
+    if len > isize::MAX as usize {
+        set_err(
+            err,
+            crate::Error::Io(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "invalid chunk buffer",
+            )),
+        );
         return false;
     }
     let inner = inner_mut(c, err);

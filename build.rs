@@ -1,14 +1,14 @@
 // Generates `include/zimru.h` from the `extern "C"` symbols in `src/cffi/`.
 // Runs only when the `cffi` Cargo feature is enabled (see Cargo.toml).
 
+#[cfg(not(feature = "cffi"))]
+fn main() {}
+
+#[cfg(feature = "cffi")]
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-changed=cbindgen.toml");
     println!("cargo:rerun-if-changed=src/cffi");
-
-    if std::env::var_os("CARGO_FEATURE_CFFI").is_none() {
-        return;
-    }
 
     let crate_dir = std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR");
     let out_path = std::path::Path::new(&crate_dir)

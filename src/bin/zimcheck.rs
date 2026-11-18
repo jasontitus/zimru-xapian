@@ -26,7 +26,6 @@ use std::collections::{HashMap, HashSet};
 use std::process::ExitCode;
 use std::time::Instant;
 
-use md5::Digest as _;
 use rayon::prelude::*;
 use zimru::{Archive, Dirent, Entry, Error};
 
@@ -34,11 +33,9 @@ const VERSION: &str = "0.1.0";
 
 #[cfg(unix)]
 fn restore_sigpipe() {
-    extern "C" {
-        fn signal(signum: i32, handler: usize) -> usize;
-    }
+    // SAFETY: restore the platform default before starting worker threads.
     unsafe {
-        let _ = signal(13, 0);
+        libc::signal(libc::SIGPIPE, libc::SIG_DFL);
     }
 }
 #[cfg(not(unix))]
@@ -927,9 +924,9 @@ fn scan_content(
                     f.is_empty = true;
                 }
                 if do_redundant && !bytes.is_empty() {
-                    let mut h = md5::Md5::new();
-                    h.update(bytes);
-                    f.md5 = Some(h.finalize().into());
+                    let mut h = md5::Context::new();
+                    h.consume(bytes);
+                    f.md5 = Some(h.finalize().0);
                 }
                 if (do_internal || do_external) && b.is_html {
                     if let Ok(text) = std::str::from_utf8(bytes) {

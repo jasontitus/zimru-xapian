@@ -61,7 +61,10 @@ impl From<&Error> for zimru_error_code_t {
 /// Wrap a Rust error in a heap-allocated `zimru_error_t` and write it
 /// through `out`. No-op if `out` is null. Internal helper used by every
 /// fallible cffi entry point.
-pub(crate) fn set_err(out: *mut *mut zimru_error_t, err: Error) {
+///
+/// # Safety
+/// A non-null `out` must be an aligned, exclusively writable pointer slot.
+pub(super) unsafe fn set_err(out: *mut *mut zimru_error_t, err: Error) {
     if out.is_null() {
         return;
     }

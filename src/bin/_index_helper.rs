@@ -21,6 +21,7 @@
 //!   once via `feed_*`. Output is written to a temp file passed on the
 //!   CLI; on `finish()` we close stdin, wait, and read the file back.
 
+use std::collections::VecDeque;
 use std::io::{Read, Write};
 use std::path::PathBuf;
 use std::process::{Child, ChildStdin, Command, Stdio};
@@ -469,9 +470,24 @@ fn spawn_one(
     // reading stdin, and deadlock the parent.
     let stderr_thread = child.stderr.take().map(|mut pipe| {
         std::thread::spawn(move || {
-            let mut buf = Vec::new();
-            let _ = pipe.read_to_end(&mut buf);
-            buf
+            // Keep only the last 64 KiB for failure diagnostics, but
+            // continue draining until EOF so the child's pipe stays writable.
+            const TAIL_BYTES: usize = 64 * 1024;
+            let mut tail = VecDeque::new();
+            let mut chunk = [0u8; 8192];
+            loop {
+                match pipe.read(&mut chunk) {
+                    Ok(0) => break,
+                    Ok(n) => {
+                        let discard = (tail.len() + n).saturating_sub(TAIL_BYTES);
+                        tail.drain(..discard);
+                        tail.extend(&chunk[..n]);
+                    }
+                    Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+                    Err(_) => break,
+                }
+            }
+            Vec::from(tail)
         })
     });
     Ok(Job {

@@ -1,3 +1,6 @@
+#![deny(unsafe_code)]
+#![cfg_attr(not(feature = "cffi"), forbid(unsafe_code))]
+
 //! `zimru` — independent Rust re-implementation of the ZIM file-format reader.
 //!
 //! This crate is a clean-room implementation written from the publicly
@@ -72,13 +75,14 @@ pub mod uuid;
 pub mod writer;
 
 #[cfg(feature = "cffi")]
+#[allow(unsafe_code)]
 pub mod cffi;
 
 pub use archive::{
-    Archive, Blob, ClusterCacheStats, DirectAccess, Entry, EntryIter, Item, PrefixIter, Summary,
-    NS_ARTICLES_LEGACY, NS_CONTENT_NEW, NS_INDEX, NS_METADATA, NS_WELLKNOWN,
+    Archive, ArchiveLimits, Blob, ClusterCacheStats, DirectAccess, Entry, EntryIter, Item,
+    PrefixIter, Summary, NS_ARTICLES_LEGACY, NS_CONTENT_NEW, NS_INDEX, NS_METADATA, NS_WELLKNOWN,
 };
-pub use cluster::{Cluster, Compression};
+pub use cluster::{Cluster, ClusterReadLimits, Compression};
 pub use dirent::{ArticleEntry, Dirent, RedirectEntry};
 pub use error::{Error, Result};
 pub use header::Header;

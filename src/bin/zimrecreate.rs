@@ -258,7 +258,7 @@ fn run(
     // path/title/mime Strings here instead would hold ~150–200 B per
     // entry for the whole archive (gigabytes on a 10M-entry Wikipedia),
     // undermining the streaming writer's bounded-RSS design; pass 2
-    // re-resolves them from the mmap with one cheap dirent parse each.
+    // re-resolves them from cached archive pages with one cheap dirent parse each.
     struct PendingContent {
         cluster: u32,
         blob: u32,
@@ -389,7 +389,7 @@ fn run(
         while i < pending.len() && pending[i].cluster == cidx {
             let p = &pending[i];
             // Re-resolve path/title/mime from the source dirent — one
-            // cheap mmap-backed parse per item, in exchange for not
+            // cached directory parse per item, in exchange for not
             // holding those Strings for the whole archive during pass 1.
             let entry = source.entry_by_url_index(p.url_index)?;
             let Dirent::Article(a) = entry.dirent() else {

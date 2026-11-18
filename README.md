@@ -49,7 +49,7 @@ and benchmark notes are not a current support matrix.
 |---|---|---|
 | ZIM versions | Legacy 5.0 and 6.0 namespaces; modern 6.1+ namespaces | Major versions other than 5 and 6 are rejected. Recognizing a future minor version does not imply support for every future feature. |
 | Cluster compression | Uncompressed (0/1), XZ (4), Zstd (5); standard and extended offsets | Deprecated zlib/bzip2 clusters are rejected. Decompression has explicit size limits. |
-| Reader | Path/title lookup, metadata, redirects, cluster access, checksum and structural checks | Input files are memory-mapped: do not modify or truncate them while open. |
+| Reader | Path/title lookup, metadata, redirects, cluster access, checksum and structural checks | Uses positioned reads on one open file. Keep its contents stable for consistent cached reads. |
 | Title listings | Modern article-only v1 listing, with legacy listing fallback | Article title iteration is not an enumeration of all resources; use path iteration for all entries. |
 | Writer | ZIM 6.3 output, metadata, illustrations, redirects, raw/XZ/Zstd clusters | Front articles are HTML entries and redirects resolving to them. Directory fields must be valid format strings; duplicate entry keys are rejected. |
 | Multipart archives | `zimsplit` creates cluster-boundary-aligned parts | The reader does not transparently join `.zimaa`, `.zimab`, etc. Join them in suffix order before opening with zimru. |
@@ -63,6 +63,12 @@ clusters at 16 GiB. These are format/implementation ceilings, not a promise
 that a machine can allocate those amounts. The cluster-cache budget is
 separate from decompression working memory. Large archives still require
 memory for entry indexes, worker state and the largest active clusters.
+
+Use `Archive::from_file_with_limits` to select metadata, table and cluster limits.
+Use `Item::read_at` for bounded reads from large uncompressed blobs. The optional
+`legacy-mmap` feature exposes `Archive::from_mmap` for existing callers.
+The review covers native codecs, the C API, transitive unsafe Rust and
+measured performance. [Memory-safety review](docs/memory-safety-review.md)
 
 ### Tool inventory
 

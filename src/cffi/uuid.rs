@@ -7,17 +7,16 @@
 //! by hashing the seed with MD5 (already a dependency for ZIM
 //! checksums) and applying RFC 4122 v4-style version/variant nibbles.
 
-use md5::{Digest, Md5};
-
 /// Derive a deterministic 16-byte UUID from an arbitrary byte seed.
 ///
+/// Nonempty `seed` must point to `seed_len` readable bytes in one allocation.
 /// `seed` may be NULL only if `seed_len` is 0. `out` must point to at
 /// least 16 writable bytes. The output has the high nibble of byte 6
 /// set to `4` and the high two bits of byte 8 set to `10` (RFC 4122
 /// v4 layout), so consumers that validate the variant won't reject it.
 #[no_mangle]
 pub unsafe extern "C" fn zimru_uuid_generate(seed: *const u8, seed_len: usize, out: *mut u8) {
-    if out.is_null() {
+    if out.is_null() || seed_len > isize::MAX as usize {
         return;
     }
     let bytes: &[u8] = if seed_len == 0 {
@@ -27,9 +26,9 @@ pub unsafe extern "C" fn zimru_uuid_generate(seed: *const u8, seed_len: usize, o
     } else {
         std::slice::from_raw_parts(seed, seed_len)
     };
-    let mut h = Md5::new();
-    h.update(bytes);
-    let mut digest: [u8; 16] = h.finalize().into();
+    let mut h = md5::Context::new();
+    h.consume(bytes);
+    let mut digest: [u8; 16] = h.finalize().0;
     // RFC 4122-style version/variant nibbles so downstream UUID
     // validators don't reject the value.
     digest[6] = (digest[6] & 0x0f) | 0x40; // version 4
