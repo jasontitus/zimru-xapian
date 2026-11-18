@@ -55,7 +55,10 @@ pub fn parse(t: &mut Tables, b: &BlockInput<'_>, p: &CParams, store: &mut SeqSto
         store.seqs.truncate(mark);
         store.lits.truncate(lit_mark);
         store.reps = reps;
-        t.epoch += (b.end + 1) as u32;
+        // The second pass starts at b.low. Its smallest valid token must
+        // exceed the largest one produced by the first pass (epoch + b.end).
+        // Add only the block span to stay inside start_frame's rollover margin.
+        t.epoch += (b.end - b.low + 1) as u32;
         t.next_insert = b.low;
         st.h3.iter_mut().for_each(|x| *x = 0);
     }

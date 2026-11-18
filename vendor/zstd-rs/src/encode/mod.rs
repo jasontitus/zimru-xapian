@@ -258,3 +258,27 @@ fn frame_params(cfg: &CompressionConfig, len: usize, dict: Option<&EncoderDictio
     p.window_log = p.window_log.min(cfg.window_log);
     p
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn optimal_job_at_high_offset_keeps_second_pass_positions_representable() {
+        let start = 3 << 20;
+        let mut source = alloc::vec![0; start];
+        source.extend((0..4096).map(|i| (i % 251) as u8));
+        let mut codec = Compressor::new(CompressionConfig { level: 22, ..CompressionConfig::DEFAULT }).unwrap();
+        // Just inside the non-resetting start_frame boundary for this input.
+        codec.w.tables.epoch = u32::MAX - source.len() as u32 - (1 << 18) - (1 << 20) - 16;
+        let job = Job { start, end: source.len(), prefix_start: start, first: true, last: true };
+        let mut frame = Vec::new();
+        let length = source.len() - start;
+        begin_frame(codec.config(), length, None, &mut frame).unwrap();
+        codec.compress_job(&source, &job, None, &mut frame).unwrap();
+        assert!(u64::from(codec.w.tables.epoch) + source.len() as u64 <= u64::from(u32::MAX));
+        let mut decoded = Vec::new();
+        crate::Decompressor::new().decompress(&frame, None, length, &mut decoded).unwrap();
+        assert_eq!(decoded, source[start..]);
+    }
+}
