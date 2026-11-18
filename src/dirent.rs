@@ -27,7 +27,7 @@
 //! u8[parameter_len] parameter
 //! ```
 
-use crate::error::Result;
+use crate::error::{Error, Result};
 use crate::raw;
 
 pub const MIME_REDIRECT: u16 = 0xFFFF;
@@ -92,51 +92,34 @@ impl Dirent {
         let namespace = raw::u8_at(buf, off + 3)?;
         let _revision = raw::u32_at(buf, off + 4)?;
 
+        let (url, after_url) = raw::cstr_at(buf, off + path_offset(mimetype))?;
+        let (title, after_title) = raw::cstr_at(buf, after_url)?;
+        if parameter_len > buf.len() - after_title {
+            return Err(Error::Truncated(after_title as u64));
+        }
+
         match mimetype {
-            MIME_REDIRECT => {
-                let redirect_index = raw::u32_at(buf, off + 8)?;
-                let (url, after_url) = raw::cstr_at(buf, off + 12)?;
-                let (title, _after_title) = raw::cstr_at(buf, after_url)?;
-                Ok(Dirent::Redirect(RedirectEntry {
-                    namespace,
-                    redirect_index,
-                    url: url.to_string(),
-                    // Empty stays empty (no allocation); the accessors fall
-                    // back to `url` so behaviour is unchanged for callers.
-                    title: title.to_string(),
-                }))
-            }
-            MIME_LINKTARGET | MIME_DELETED => {
-                // Treat deprecated forms as articles with no content, leaving
-                // the cluster/blob fields readable for diagnostic purposes.
-                let cluster = raw::u32_at(buf, off + 8)?;
-                let blob = raw::u32_at(buf, off + 12)?;
-                let (url, after_url) = raw::cstr_at(buf, off + 16)?;
-                let (title, _) = raw::cstr_at(buf, after_url)?;
-                Ok(Dirent::Article(ArticleEntry {
-                    mimetype,
-                    namespace,
-                    cluster,
-                    blob,
-                    url: url.to_string(),
-                    title: title.to_string(),
-                }))
-            }
-            _ => {
-                let cluster = raw::u32_at(buf, off + 8)?;
-                let blob = raw::u32_at(buf, off + 12)?;
-                let (url, after_url) = raw::cstr_at(buf, off + 16)?;
-                let (title, after_title) = raw::cstr_at(buf, after_url)?;
-                let _param_end = after_title + parameter_len;
-                Ok(Dirent::Article(ArticleEntry {
-                    mimetype,
-                    namespace,
-                    cluster,
-                    blob,
-                    url: url.to_string(),
-                    title: title.to_string(),
-                }))
-            }
+            MIME_REDIRECT => Ok(Dirent::Redirect(RedirectEntry {
+                namespace,
+                redirect_index: raw::u32_at(buf, off + 8)?,
+                url: url.to_owned(),
+                title: title.to_owned(),
+            })),
+            // These retired records have no cluster or blob fields. Reporting
+            // the unsupported type prevents a payload lookup using path bytes.
+            MIME_LINKTARGET | MIME_DELETED => Err(std::io::Error::new(
+                std::io::ErrorKind::Unsupported,
+                format!("unsupported legacy directory entry type {mimetype:#06x}"),
+            )
+            .into()),
+            _ => Ok(Dirent::Article(ArticleEntry {
+                mimetype,
+                namespace,
+                cluster: raw::u32_at(buf, off + 8)?,
+                blob: raw::u32_at(buf, off + 12)?,
+                url: url.to_owned(),
+                title: title.to_owned(),
+            })),
         }
     }
 
@@ -150,11 +133,7 @@ impl Dirent {
     pub fn key_at(buf: &[u8], off: usize) -> Result<(u8, &str)> {
         let mimetype = raw::u16_at(buf, off)?;
         let namespace = raw::u8_at(buf, off + 3)?;
-        let url_off = if mimetype == MIME_REDIRECT {
-            off + 12
-        } else {
-            off + 16
-        };
+        let url_off = off + path_offset(mimetype);
         let (url, _) = raw::cstr_at(buf, url_off)?;
         Ok((namespace, url))
     }
@@ -166,11 +145,7 @@ impl Dirent {
     pub fn title_key_at(buf: &[u8], off: usize) -> Result<(u8, &str)> {
         let mimetype = raw::u16_at(buf, off)?;
         let namespace = raw::u8_at(buf, off + 3)?;
-        let url_off = if mimetype == MIME_REDIRECT {
-            off + 12
-        } else {
-            off + 16
-        };
+        let url_off = off + path_offset(mimetype);
         let (url, after_url) = raw::cstr_at(buf, url_off)?;
         let (title, _) = raw::cstr_at(buf, after_url)?;
         Ok((namespace, if title.is_empty() { url } else { title }))
@@ -202,6 +177,15 @@ impl Dirent {
 
     pub fn is_redirect(&self) -> bool {
         matches!(self, Dirent::Redirect(_))
+    }
+}
+
+// Offsets from the start of a directory record to its first string.
+fn path_offset(mimetype: u16) -> usize {
+    match mimetype {
+        MIME_REDIRECT => 12,
+        MIME_LINKTARGET | MIME_DELETED => 8,
+        _ => 16,
     }
 }
 
@@ -273,6 +257,37 @@ mod tests {
         let buf = build_article(2, b'C', 0, 0, "kiwix.png", "");
         let d = Dirent::parse(&buf, 0).unwrap();
         assert_eq!(d.title(), "kiwix.png");
+    }
+
+    #[test]
+    fn complete_records_include_the_declared_parameters() {
+        for mut buf in [
+            build_article(0, b'A', 0, 0, "path", ""),
+            build_redirect(b'A', 1, "old", ""),
+        ] {
+            buf[2] = 2;
+            buf.extend_from_slice(&[1, 2]);
+            assert!(Dirent::parse(&buf, 0).is_ok());
+            assert!(matches!(
+                Dirent::parse(&buf[..buf.len() - 1], 0),
+                Err(Error::Truncated(_))
+            ));
+        }
+    }
+
+    #[test]
+    fn obsolete_markers_have_search_keys_and_no_blob_location() {
+        for kind in [MIME_LINKTARGET, MIME_DELETED] {
+            let mut buf = vec![0; 8];
+            buf[..2].copy_from_slice(&kind.to_le_bytes());
+            buf[3] = b'A';
+            buf.extend_from_slice(b"old page\0Title\0");
+            assert_eq!(Dirent::key_at(&buf, 0).unwrap(), (b'A', "old page"));
+            assert_eq!(Dirent::title_key_at(&buf, 0).unwrap(), (b'A', "Title"));
+            assert!(
+                matches!(Dirent::parse(&buf, 0), Err(Error::Io(e)) if e.kind() == std::io::ErrorKind::Unsupported)
+            );
+        }
     }
 
     #[test]

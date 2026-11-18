@@ -216,3 +216,60 @@ fn header_title_table_can_alias_an_uncompressed_listing_blob() {
     archive.validate_cluster_references(0, &[0, 1]).unwrap();
     assert_eq!(archive.cluster_cache_stats().entries, 0);
 }
+
+#[test]
+fn iterator_setup_errors_are_yielded_once_with_an_exact_size_hint() {
+    let tmp = TempDir::new();
+    let path = tmp.0.join("long-url.zim");
+    write_archive(File::create(&path).unwrap(), 4);
+    // Reuse the long title as part of a long URL, leaving an empty title.
+    let mut file = fs::OpenOptions::new().write(true).open(&path).unwrap();
+    file.seek(SeekFrom::Start(4092 + 16 + 5)).unwrap();
+    file.write_all(b"-").unwrap();
+    drop(file);
+    let limits = ArchiveLimits {
+        max_metadata_record_bytes: 80,
+        ..Default::default()
+    };
+    let archive = Archive::from_file_with_limits(File::open(path).unwrap(), limits).unwrap();
+    let mut titles = archive.iter_by_title();
+    assert_eq!(titles.size_hint(), (1, Some(1)));
+    assert_eq!(titles.len(), 1);
+    assert!(titles.next().unwrap().is_err());
+    assert_eq!(titles.size_hint(), (0, Some(0)));
+    assert!(titles.next().is_none());
+    assert!(titles.next().is_none());
+
+    let mut prefix = archive.by_prefix(b'C', "not present");
+    assert!(prefix.next().unwrap().is_err());
+    assert!(prefix.next().is_none());
+    assert!(prefix.next().is_none());
+}
+
+#[test]
+fn simultaneous_readers_share_the_same_cached_payload() {
+    use std::sync::{Arc, Barrier};
+    let tmp = TempDir::new();
+    let path = tmp.0.join("shared-cluster.zim");
+    write_archive(File::create(&path).unwrap(), 2 << 20);
+    let archive = Archive::open(path).unwrap();
+    let gate = Barrier::new(12);
+    let clusters = std::thread::scope(|scope| {
+        let workers = (0..12)
+            .map(|_| {
+                scope.spawn(|| {
+                    gate.wait();
+                    archive.cluster(0).unwrap()
+                })
+            })
+            .collect::<Vec<_>>();
+        workers
+            .into_iter()
+            .map(|w| w.join().unwrap())
+            .collect::<Vec<_>>()
+    });
+    assert!(clusters.iter().all(|c| Arc::ptr_eq(&clusters[0], c)));
+    let stats = archive.cluster_cache_stats();
+    assert_eq!(stats.entries, 1);
+    assert_eq!(stats.hits + stats.misses, 12);
+}

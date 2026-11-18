@@ -4,7 +4,7 @@ use std::fs::File;
 use std::io::{self, Read};
 use std::num::NonZeroUsize;
 use std::ops::Range;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use lru::LruCache;
 use parking_lot::Mutex;
@@ -13,7 +13,8 @@ use crate::error::{Error, Result};
 
 const PAGE: usize = 4096;
 const SHARDS: usize = 16;
-const PAGES_PER_SHARD: usize = 16;
+const PINNED_PAGES: usize = 128;
+const PAGES_PER_SHARD: usize = 8;
 // Directory strings and the whole MIME declaration are variable-length. This
 // ceiling applies to one metadata record, never to the archive or blob size.
 pub(super) const DEFAULT_MAX_METADATA_RECORD: usize = 16 << 20;
@@ -30,6 +31,9 @@ pub(super) struct Storage {
     source: Source,
     len: u64,
     metadata_limit: usize,
+    // Stable references allow common metadata pages to be read without taking an
+    // LRU lock or updating a shared reference count. Collisions use the LRU.
+    pinned: [OnceLock<(u64, Box<[u8]>)>; PINNED_PAGES],
     pages: [Mutex<LruCache<u64, Arc<[u8]>>>; SHARDS],
     #[cfg(not(any(unix, windows)))]
     seek_lock: Mutex<()>,
@@ -52,6 +56,7 @@ impl Storage {
             source,
             len,
             metadata_limit,
+            pinned: std::array::from_fn(|_| OnceLock::new()),
             pages: std::array::from_fn(|_| {
                 Mutex::new(LruCache::new(NonZeroUsize::new(PAGES_PER_SHARD).unwrap()))
             }),
@@ -119,17 +124,33 @@ impl Storage {
         }
     }
 
-    fn page(&self, at: u64) -> Result<Arc<[u8]>> {
-        let number = at / PAGE as u64;
+    fn read_page(&self, number: u64) -> Result<Box<[u8]>> {
+        let start = number * PAGE as u64;
+        let len = (self.len - start).min(PAGE as u64) as usize;
+        let mut bytes = vec![0; len].into_boxed_slice();
+        self.read_exact(start, &mut bytes)?;
+        Ok(bytes)
+    }
+
+    fn pinned_page(&self, number: u64) -> Result<Option<&[u8]>> {
+        let slot = &self.pinned[number as usize % PINNED_PAGES];
+        if slot.get().is_none() {
+            let page = self.read_page(number)?;
+            // Another reader may have filled the slot while this one did I/O.
+            // Only complete pages are published. An I/O error can be retried.
+            let _ = slot.set((number, page));
+        }
+        Ok(slot
+            .get()
+            .and_then(|(stored, bytes)| (*stored == number).then_some(bytes.as_ref())))
+    }
+
+    fn recent_page(&self, number: u64) -> Result<Arc<[u8]>> {
         let shard = &self.pages[number as usize % SHARDS];
         if let Some(page) = shard.lock().get(&number).cloned() {
             return Ok(page);
         }
-        let start = number * PAGE as u64;
-        let len = (self.len - start).min(PAGE as u64) as usize;
-        let mut page = vec![0; len];
-        self.read_exact(start, &mut page)?;
-        let page: Arc<[u8]> = page.into();
+        let page: Arc<[u8]> = self.read_page(number)?.into();
         shard.lock().put(number, page.clone());
         Ok(page)
     }
@@ -147,6 +168,8 @@ impl Storage {
                 )
                 .into())
             }
+            Err(Error::Truncated(relative)) => Err(Error::Truncated(at.saturating_add(relative))),
+            Err(Error::BadUtf8(relative)) => Err(Error::BadUtf8(at.saturating_add(relative))),
             result => result,
         };
         #[cfg(feature = "legacy-mmap")]
@@ -154,7 +177,15 @@ impl Storage {
             let pos = at as usize;
             return parse_prefix(&map[pos..pos + max]);
         }
-        let page = self.page(at)?;
+        let number = at / PAGE as u64;
+        let recent;
+        let page = match self.pinned_page(number)? {
+            Some(bytes) => bytes,
+            None => {
+                recent = self.recent_page(number)?;
+                &recent
+            }
+        };
         let tail = &page[at as usize % PAGE..];
         let tail = &tail[..tail.len().min(max)];
         match parse_prefix(tail) {
@@ -217,6 +248,49 @@ mod tests {
     use super::*;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Barrier;
+
+    #[test]
+    fn colliding_pages_keep_the_original_bytes_and_the_last_short_page() {
+        use std::fs::OpenOptions;
+        use std::io::{Seek, SeekFrom, Write};
+
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!("zimru-pages-{}-{stamp}", std::process::id()));
+        let mut file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create_new(true)
+            .open(&path)
+            .unwrap();
+        let stride = (PINNED_PAGES * PAGE) as u64;
+        for i in 0..12u8 {
+            file.seek(SeekFrom::Start(u64::from(i) * stride)).unwrap();
+            file.write_all(&[i]).unwrap();
+        }
+        let storage = Storage::file(file, DEFAULT_MAX_METADATA_RECORD).unwrap();
+        for i in (0..12u8).chain((0..12).rev()) {
+            assert_eq!(
+                storage
+                    .parse(u64::from(i) * stride, |buf| crate::raw::u8_at(buf, 0))
+                    .unwrap(),
+                i
+            );
+        }
+        drop(storage);
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn small_metadata_reads_report_physical_offsets() {
+        let storage =
+            Storage::file(File::open(file!()).unwrap(), DEFAULT_MAX_METADATA_RECORD).unwrap();
+        let last = storage.len() - 1;
+        let result = storage.parse(last, |buf| crate::raw::u64_at(buf, 0));
+        assert!(matches!(result, Err(Error::Truncated(off)) if off == last));
+    }
 
     #[test]
     fn concurrent_table_first_reads_publish_one_value_and_retry_after_error() {

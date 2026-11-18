@@ -47,7 +47,7 @@ and benchmark notes are not a current support matrix.
 
 | Area | Supported behavior | Limits / differences |
 |---|---|---|
-| ZIM versions | Legacy 5.0 and 6.0 namespaces; modern 6.1+ namespaces | Major versions other than 5 and 6 are rejected. Recognizing a future minor version does not imply support for every future feature. |
+| ZIM versions | Legacy 5.0 and 6.0 namespaces; modern 6.1+ namespaces | Major versions other than 5 and 6 are rejected. Materializing retired linktarget/deleted directory records returns an unsupported-format error. |
 | Cluster compression | Uncompressed (0/1), XZ (4), Zstd (5); standard and extended offsets | Deprecated zlib/bzip2 clusters are rejected. Decompression has explicit size limits. |
 | Reader | Path/title lookup, metadata, redirects, cluster access, checksum and structural checks | Uses positioned reads on one open file. Keep its contents stable for consistent cached reads. |
 | Title listings | Modern article-only v1 listing, with legacy listing fallback | Article title iteration is not an enumeration of all resources; use path iteration for all entries. |

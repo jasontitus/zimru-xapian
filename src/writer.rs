@@ -673,7 +673,15 @@ impl Creator {
         h.finalize().0
     }
 
+    fn ensure_writable(&self) -> Result<()> {
+        if let Some(stream) = &self.stream {
+            stream.ensure_writable()?;
+        }
+        Ok(())
+    }
+
     fn check_entry_key(&self, namespace: u8, path: &str) -> Result<()> {
+        self.ensure_writable()?;
         if self
             .entry_keys
             .contains(&Self::entry_key_digest(namespace, path))
@@ -736,11 +744,7 @@ impl Creator {
     /// borrow on the inner streamer.
     #[doc(hidden)]
     pub fn peek_streaming(&self) -> Option<()> {
-        if self.stream.is_some() {
-            Some(())
-        } else {
-            None
-        }
+        self.stream.as_ref()?.ensure_writable().ok()
     }
 
     /// Streaming-mode push that propagates errors (unlike
@@ -1003,6 +1007,7 @@ impl Creator {
     pub fn try_set_main_path(&mut self, path: impl Into<String>) -> Result<()> {
         let p: String = path.into();
         validate_text("main path", &p)?;
+        self.ensure_writable()?;
         let already_set = self
             .stream
             .as_ref()
@@ -1093,39 +1098,37 @@ impl Creator {
     /// `add_*` calls bin-pack into the in-flight cluster and stream-
     /// encode-write to disk as the cluster fills, dropping body
     /// references immediately. Buffered work added before this call
-    /// is drained into the streamer here.
+    /// is drained into the streamer here. If opening or reserving the output
+    /// fails, the buffered work and main page are preserved for another path.
+    /// A failure after draining begins ends this build.
     pub fn start_writing(&mut self, path: impl AsRef<Path>) -> Result<()> {
         if self.stream.is_some() {
             return Err(Error::Io(std::io::Error::other(
                 "Creator::start_writing called twice",
             )));
         }
-        let mut s = Streamer::open(
+        let stream = Streamer::open(
             path.as_ref(),
             self.compression,
             self.compression_level,
             self.cluster_size_target,
             self.max_in_flight_bytes,
             self.uuid,
-            self.main_path.take(),
             self.cluster_strategy,
             self.streaming_encode_threshold,
         )?;
-        // Drain anything the caller buffered through add_* before
-        // they decided to stream.
+        let s = self.stream.insert(stream);
+        s.main_path = self.main_path.take();
         for item in self.items.drain(..) {
-            s.push_item(item)?;
+            if let Err(err) = s.push_item(item) {
+                // Bodies already moved into the stream cannot be replayed.
+                s.abort();
+                return Err(err);
+            }
         }
-        for r in self.redirections.drain(..) {
-            s.redirections.push(r);
-        }
-        for m in self.metadata.drain(..) {
-            s.metadata.push(m);
-        }
-        for il in self.illustrations.drain(..) {
-            s.illustrations.push(il);
-        }
-        self.stream = Some(s);
+        s.redirections.append(&mut self.redirections);
+        s.metadata.append(&mut self.metadata);
+        s.illustrations.append(&mut self.illustrations);
         Ok(())
     }
 
@@ -1376,10 +1379,8 @@ fn build_counter_string(
 /// back. Real libzim's only positional invariant is `mime_list_pos
 /// == 80`, which we honour via the reserved region.
 struct Streamer {
-    /// Output file handle. `Some` normally; temporarily `None` while
-    /// a streaming-encode huge item is in flight (the zstd encoder
-    /// owns the file across `item_chunk` calls and gives it back at
-    /// `end_item`).
+    /// Either this field or the encode pipeline owns the output. Both are
+    /// absent after an irreversible error; only a fresh Creator can start over.
     file: Option<File>,
     file_pos: u64,
     output_path: std::path::PathBuf,
@@ -1496,15 +1497,25 @@ struct PendingArticle {
 }
 
 impl Streamer {
-    /// Mutable access to the output file. Panics if called while the
-    /// encode pipeline owns the file — callers must
-    /// `shutdown_pipeline()` first. All file-touching paths in this
-    /// module do, so this never panics in practice.
-    #[inline]
-    fn file_mut(&mut self) -> &mut File {
+    fn ensure_writable(&self) -> Result<()> {
+        if self.file.is_none() && self.pipeline.is_none() {
+            return Err(Error::Io(std::io::Error::other(
+                "archive build previously failed",
+            )));
+        }
+        Ok(())
+    }
+
+    fn abort(&mut self) {
+        // Dropping a pipeline joins its workers and releases its output file.
+        self.pipeline.take();
+        self.file.take();
+    }
+
+    fn file_mut(&mut self) -> Result<&mut File> {
         self.file
             .as_mut()
-            .expect("Streamer file is owned by the encode pipeline")
+            .ok_or_else(|| Error::Io(std::io::Error::other("output file unavailable")))
     }
 
     /// Spin up the encode pipeline: hand the output file to a writer
@@ -1512,6 +1523,11 @@ impl Streamer {
     /// the first cluster flush.
     fn start_pipeline(&mut self) -> Result<()> {
         use std::sync::mpsc::sync_channel;
+        let mut file = self.file.take().ok_or_else(|| {
+            Error::Io(std::io::Error::other(
+                "output file unavailable at pipeline start",
+            ))
+        })?;
         let threads = rayon::current_num_threads().max(1);
         let limit = if self.max_in_flight_bytes == 0 {
             self.cluster_size_target
@@ -1558,7 +1574,6 @@ impl Streamer {
         }
         drop(out_tx); // writer's recv ends when the last worker exits
 
-        let mut file = self.file.take().expect("file present at pipeline start");
         let file_pos = self.file_pos;
         let writer = std::thread::spawn(move || -> Result<PipelineWriterDone> {
             let mut pos = file_pos;
@@ -1676,7 +1691,6 @@ impl Streamer {
         cluster_size_target: usize,
         max_in_flight_bytes: usize,
         uuid: [u8; 16],
-        main_path: Option<String>,
         cluster_strategy: ClusterStrategy,
         streaming_threshold: usize,
     ) -> Result<Self> {
@@ -1701,7 +1715,7 @@ impl Streamer {
             cluster_size_target,
             max_in_flight_bytes,
             uuid,
-            main_path,
+            main_path: None,
             cluster_strategy,
             streaming_threshold,
             mimes: Vec::new(),
@@ -1895,6 +1909,7 @@ impl Streamer {
     }
 
     fn chunked_item_chunk(&mut self, chunk: &[u8]) -> Result<()> {
+        self.ensure_writable()?;
         match self.in_flight.as_mut() {
             None => Err(Error::Io(std::io::Error::other(
                 "chunked_item_chunk: no item in flight",
@@ -1926,7 +1941,10 @@ impl Streamer {
                     .write_all(chunk)
                     .map_err(|e| Error::Decompression(format!("zstd chunk write: {e}")));
                 self.stats.streaming_encode += phase_start.elapsed();
-                r?;
+                if let Err(err) = r {
+                    self.abort();
+                    return Err(err);
+                }
                 if let Some(ChunkedInFlight::StreamingZstd { bytes_written, .. }) =
                     self.in_flight.as_mut()
                 {
@@ -1948,7 +1966,10 @@ impl Streamer {
                     .write_all(chunk)
                     .map_err(|e| Error::Io(std::io::Error::other(format!("raw chunk write: {e}"))));
                 self.stats.streaming_encode += phase_start.elapsed();
-                r?;
+                if let Err(err) = r {
+                    self.abort();
+                    return Err(err);
+                }
                 *bytes_written += chunk.len() as u64;
                 Ok(())
             }
@@ -1956,6 +1977,7 @@ impl Streamer {
     }
 
     fn end_chunked_item(&mut self) -> Result<()> {
+        self.ensure_writable()?;
         // Keep an incomplete item open so callers can append missing bytes and
         // retry. Taking it first would strand a streaming cluster-offset slot.
         let lengths = match self.in_flight.as_ref() {
@@ -1987,14 +2009,20 @@ impl Streamer {
             None => Err(Error::Io(std::io::Error::other(
                 "end_chunked_item: no item in flight",
             ))),
-            Some(ChunkedInFlight::Buffered { meta, content, .. }) => self.push_item(Item {
-                path: meta.path,
-                title: meta.title,
-                mimetype: meta.mimetype,
-                content,
-                namespace: meta.namespace,
-                compress: meta.compress,
-            }),
+            Some(ChunkedInFlight::Buffered { meta, content, .. }) => {
+                let result = self.push_item(Item {
+                    path: meta.path,
+                    title: meta.title,
+                    mimetype: meta.mimetype,
+                    content,
+                    namespace: meta.namespace,
+                    compress: meta.compress,
+                });
+                if result.is_err() {
+                    self.abort();
+                }
+                result
+            }
             Some(ChunkedInFlight::StreamingZstd {
                 meta,
                 encoder,
@@ -2131,7 +2159,7 @@ impl Streamer {
         for (cluster_idx, temp_path, bytes) in completed {
             self.cluster_offsets[cluster_idx as usize] = self.file_pos;
             let mut tf = std::fs::File::open(&temp_path)?;
-            let copied = std::io::copy(&mut tf, self.file_mut())?;
+            let copied = std::io::copy(&mut tf, self.file_mut()?)?;
             drop(tf);
             self.file_pos += copied;
             self.stats.clusters_streamed += 1;
@@ -2282,7 +2310,10 @@ impl Streamer {
         // bounded job channel provides the memory backpressure that
         // the old batch-drain trigger used to.
         let compression = bucket.compression;
-        self.send_cluster(cluster_idx, bucket.blobs, compression)?;
+        if let Err(err) = self.send_cluster(cluster_idx, bucket.blobs, compression) {
+            self.abort();
+            return Err(err);
+        }
         // Reinsert empty bucket for reuse without map churn — keep
         // the same compression so subsequent items with this key
         // continue to land in compatible clusters.
@@ -2312,6 +2343,7 @@ impl Streamer {
     /// into clusters and dirents, sort, render tables, fill mime
     /// list, write final header, MD5.
     fn finalize(mut self) -> Result<()> {
+        self.ensure_writable()?;
         // A chunked item that was begun but never end_chunked_item'd
         // means a dirent is missing and (on the streaming path) a
         // cluster_offsets slot would stay at its placeholder 0 —
@@ -2682,7 +2714,7 @@ impl Streamer {
         for d in &self.dirents {
             encode_dirent_into(d, &mut staging);
         }
-        self.file_mut().write_all(&staging)?;
+        self.file_mut()?.write_all(&staging)?;
         drop(staging);
         drop(dirent_offsets);
         self.stats.table_write += table_phase.elapsed();
@@ -2698,8 +2730,8 @@ impl Streamer {
                 MIME_LIST_RESERVE
             ))));
         }
-        self.file_mut().seek(SeekFrom::Start(HEADER_SIZE as u64))?;
-        self.file_mut().write_all(&mime_list_bytes)?;
+        self.file_mut()?.seek(SeekFrom::Start(HEADER_SIZE as u64))?;
+        self.file_mut()?.write_all(&mime_list_bytes)?;
 
         // 12. Write final header at offset 0.
         let final_header = encode_header(&HeaderFields {
@@ -2715,13 +2747,13 @@ impl Streamer {
             main_page: main_page_idx,
             checksum_pos,
         });
-        self.file_mut().seek(SeekFrom::Start(0))?;
-        self.file_mut().write_all(&final_header)?;
-        self.file_mut().flush()?;
+        self.file_mut()?.seek(SeekFrom::Start(0))?;
+        self.file_mut()?.write_all(&final_header)?;
+        self.file_mut()?.flush()?;
 
         // Hash the final on-disk bytes through the same open handle.
         let md5_phase = Instant::now();
-        let file = self.file_mut();
+        let file = self.file_mut()?;
         file.seek(SeekFrom::Start(0))?;
         crate::io_hints::hint_sequential(file);
         let mut hash = md5::Context::new();
@@ -2737,9 +2769,9 @@ impl Streamer {
             .into());
         }
         let digest = hash.finalize().0;
-        self.file_mut().seek(SeekFrom::Start(checksum_pos))?;
-        self.file_mut().write_all(&digest)?;
-        self.file_mut().flush()?;
+        self.file_mut()?.seek(SeekFrom::Start(checksum_pos))?;
+        self.file_mut()?.write_all(&digest)?;
+        self.file_mut()?.flush()?;
         self.stats.md5_pass += md5_phase.elapsed();
 
         // Verify the same file we wrote even if its pathname is replaced.
@@ -3124,6 +3156,80 @@ mod tests {
     }
 
     #[test]
+    fn failed_open_preserves_buffered_entries_and_main_page_for_retry() {
+        let path = output_path("retry-open");
+        let mut creator = Creator::new();
+        creator
+            .set_main_path("home")
+            .add_item(Item::text("home", "Home", b"welcome"))
+            .add_metadata("Language", b"eng");
+        assert!(creator.start_writing(path.join("unavailable.zim")).is_err());
+
+        creator.start_writing(&path).unwrap();
+        creator.finish_writing().unwrap();
+        let archive = crate::Archive::open(&path).unwrap();
+        assert_eq!(archive.main_path().unwrap(), "home");
+        assert_eq!(archive.get_bytes("home").unwrap(), b"welcome");
+        assert_eq!(archive.get_metadata("Language").unwrap(), b"eng");
+        drop(archive);
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn partial_buffered_drain_cannot_restart_or_finalize() {
+        let path = output_path("drain-failure");
+        let mut creator = Creator::new();
+        // Each MIME fits independently. Interning both during the buffered
+        // drain reaches the archive's aggregate MIME-table capacity.
+        for name in ["first", "second"] {
+            let mime = format!("text/{}{name}", "a".repeat(MIME_LIST_RESERVE / 2));
+            creator
+                .try_add_item(Item::new(name, "", mime, b"body"))
+                .unwrap();
+        }
+        assert!(creator.start_writing(&path).is_err());
+        assert!(creator.start_writing(&path).is_err());
+        assert!(creator
+            .try_add_item(Item::text("next", "", b"body"))
+            .is_err());
+        assert!(creator.finish_writing().is_err());
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn failed_scratch_write_ends_the_build() {
+        let path = output_path("chunk-failure");
+        let mut creator = Creator::new();
+        creator
+            .set_compression(Compression::None)
+            .set_streaming_encode_threshold(1);
+        creator.start_writing(&path).unwrap();
+        creator
+            .begin_chunked_item(
+                None,
+                "home".into(),
+                "".into(),
+                "text/plain".into(),
+                Some(4),
+                None,
+            )
+            .unwrap();
+        let Some(ChunkedInFlight::StreamingRaw {
+            temp_file,
+            temp_path,
+            ..
+        }) = creator.stream.as_mut().unwrap().in_flight.as_mut()
+        else {
+            panic!("expected a streamed raw item");
+        };
+        *temp_file = File::open(temp_path.as_ref()).unwrap();
+        assert!(creator.chunked_item_chunk(b"data").is_err());
+        assert!(creator.end_chunked_item().is_err());
+        assert!(creator.finish_writing().is_err());
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
     fn pipeline_write_failure_joins_workers_and_releases_every_reservation() {
         let path = output_path("pipeline-failure");
         let mut creator = Creator::new();
@@ -3143,7 +3249,10 @@ mod tests {
             0,
             "failed output releases all byte permits"
         );
-        drop(creator);
+        assert!(creator
+            .try_add_item(Item::text("retry", "", b"data"))
+            .is_err());
+        assert!(creator.finish_writing().is_err());
         let _ = std::fs::remove_file(path);
     }
 }

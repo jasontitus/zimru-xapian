@@ -8,11 +8,14 @@
 mod storage;
 
 use std::cmp::Ordering;
+use std::collections::HashMap;
 use std::fs::File;
 use std::io::{self, Read};
 use std::ops::Range;
 use std::path::Path;
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, OnceLock, Weak};
+
+use parking_lot::Mutex;
 
 use lru::LruCache;
 #[cfg(feature = "legacy-mmap")]
@@ -60,6 +63,7 @@ pub const DEFAULT_CLUSTER_CACHE_MAX_BYTES: usize = 64 * 1024 * 1024;
 #[derive(Debug)]
 struct ClusterByteCache {
     inner: LruCache<u32, Arc<Cluster>>,
+    loading: HashMap<u32, Weak<ClusterLoad>>,
     max_bytes: usize,
     current_bytes: usize,
     hits: u64,
@@ -71,6 +75,7 @@ impl ClusterByteCache {
     fn new(max_bytes: usize) -> Self {
         Self {
             inner: LruCache::unbounded(),
+            loading: HashMap::new(),
             max_bytes,
             current_bytes: 0,
             hits: 0,
@@ -133,6 +138,30 @@ impl ClusterByteCache {
     }
 }
 
+/// A miss shares one in-flight decode with every concurrent reader of this
+/// cluster. The entry is independent of the resident LRU, so eviction before
+/// a waiter wakes cannot force that waiter to decompress the same bytes again.
+struct ClusterLoad {
+    idx: u32,
+    owner: Weak<ArchiveCore>,
+    result: TableCache<Arc<Cluster>>,
+}
+
+impl Drop for ClusterLoad {
+    fn drop(&mut self) {
+        if let Some(core) = self.owner.upgrade() {
+            let mut cache = core.cluster_cache.lock();
+            if cache
+                .loading
+                .get(&self.idx)
+                .is_some_and(|slot| slot.strong_count() == 0)
+            {
+                cache.loading.remove(&self.idx);
+            }
+        }
+    }
+}
+
 /// Snapshot of the cluster cache's resident-byte budget, current
 /// occupancy, and lifetime hit/miss/eviction counters. Returned by
 /// [`Archive::cluster_cache_stats`]. Counters are monotonic; resetting
@@ -151,10 +180,19 @@ pub struct ClusterCacheStats {
 /// lock across the read/allocation, leave it empty on error, and take no lock
 /// after publication. Each table has its own lock since loading a title blob
 /// can first require the cluster-offset table.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 struct TableCache<T> {
     value: OnceLock<T>,
     initializing: parking_lot::Mutex<()>,
+}
+
+impl<T> Default for TableCache<T> {
+    fn default() -> Self {
+        Self {
+            value: OnceLock::new(),
+            initializing: Mutex::new(()),
+        }
+    }
 }
 
 impl<T> TableCache<T> {
@@ -826,24 +864,13 @@ impl Archive {
 
     /// Iterate every entry in URL-pointer (path) order.
     pub fn iter_by_path(&self) -> EntryIter {
-        EntryIter {
-            archive: self.clone(),
-            kind: IterKind::ByPath,
-            i: 0,
-            n: self.core.header.entry_count,
-        }
+        EntryIter::new(self, IterKind::ByPath, Ok(0..self.entry_count()))
     }
 
     /// Iterate the title listing. A modern v1 listing yields only selected
     /// front articles; full header/v0 listings include every entry.
     pub fn iter_by_title(&self) -> EntryIter {
-        let n = self.title_listing().map(|v| v.len() as u32).unwrap_or(0);
-        EntryIter {
-            archive: self.clone(),
-            kind: IterKind::ByTitle,
-            i: 0,
-            n,
-        }
+        EntryIter::new(self, IterKind::ByTitle, self.title_count().map(|n| 0..n))
     }
 
     /// Get a metadata value by name (e.g. "Title", "Description", "Language").
@@ -994,8 +1021,8 @@ impl Archive {
         })
     }
 
-    /// Iterate only the content-namespace (`C`) entries in path order,
-    /// skipping redirects. The canonical "every article" loop.
+    /// Iterate all entries of the content namespace in path order, including
+    /// redirects. Legacy archives use the articles namespace.
     ///
     /// ```no_run
     /// # use zimru::Archive;
@@ -1012,13 +1039,7 @@ impl Archive {
         } else {
             NS_ARTICLES_LEGACY
         };
-        let range = self.namespace_range(ns).unwrap_or(0..0);
-        EntryIter {
-            archive: self.clone(),
-            kind: IterKind::ByPath,
-            i: range.start,
-            n: range.end,
-        }
+        EntryIter::new(self, IterKind::ByPath, self.namespace_range(ns))
     }
 
     /// Iterate every entry whose (namespace, url) starts with a given
@@ -1041,36 +1062,31 @@ impl Archive {
         ns: u8,
         prefix: &'a str,
     ) -> impl Iterator<Item = Result<Entry>> + 'a {
-        let n = self.core.header.entry_count;
-        // First index whose (ns, url) is >= (ns, prefix).
-        let start = {
-            let mut lo = 0u32;
-            let mut hi = n;
-            while lo < hi {
-                let mid = lo + (hi - lo) / 2;
-                let off = self.url_pointer(mid).unwrap_or(0);
-                let d = self
-                    .dirent(off)
-                    .ok()
-                    .map(|d| (d.namespace(), d.url().to_string()));
-                let cmp = match d {
-                    Some((dns, durl)) => dns.cmp(&ns).then_with(|| durl.as_str().cmp(prefix)),
-                    None => Ordering::Greater,
-                };
-                match cmp {
-                    Ordering::Less => lo = mid + 1,
-                    _ => hi = mid,
-                }
-            }
-            lo
-        };
+        let n = self.entry_count();
+        let range = self.prefix_start(ns, prefix, n).map(|i| i..n);
         PrefixIter {
-            archive: self.clone(),
+            entries: EntryIter::new(self, IterKind::ByPath, range),
             ns,
-            prefix: prefix.to_string(),
-            i: start,
-            n,
+            prefix: prefix.to_owned(),
         }
+    }
+
+    fn prefix_start(&self, ns: u8, prefix: &str, mut hi: u32) -> Result<u32> {
+        let mut lo = 0;
+        while lo < hi {
+            let mid = lo + (hi - lo) / 2;
+            let off = self.url_pointer(mid)?;
+            let cmp = self.core.storage.parse(off, |buf| {
+                let (dns, url) = Dirent::key_at(buf, 0)?;
+                Ok(dns.cmp(&ns).then_with(|| url.cmp(prefix)))
+            })?;
+            if cmp.is_lt() {
+                lo = mid + 1;
+            } else {
+                hi = mid;
+            }
+        }
+        Ok(lo)
     }
 
     /// Rayon-aware parallel iterator over every entry in URL-pointer order.
@@ -1433,16 +1449,32 @@ impl Archive {
     }
 
     fn load_cluster(&self, idx: u32) -> Result<Arc<Cluster>> {
-        if let Some(c) = self.core.cluster_cache.lock().unwrap().get(idx) {
-            return Ok(c);
-        }
-        let cluster = Arc::new(self.cluster_uncached(idx)?);
-        self.core
-            .cluster_cache
-            .lock()
-            .unwrap()
-            .put(idx, cluster.clone());
-        Ok(cluster)
+        let pending = {
+            let mut cache = self.core.cluster_cache.lock();
+            if let Some(cluster) = cache.get(idx) {
+                return Ok(cluster);
+            }
+            match cache.loading.get(&idx).and_then(Weak::upgrade) {
+                Some(pending) => pending,
+                None => {
+                    let pending = Arc::new(ClusterLoad {
+                        idx,
+                        owner: Arc::downgrade(&self.core),
+                        result: TableCache::default(),
+                    });
+                    cache.loading.insert(idx, Arc::downgrade(&pending));
+                    pending
+                }
+            }
+        };
+        pending
+            .result
+            .get_or_try_init(|| {
+                let cluster = Arc::new(self.cluster_uncached(idx)?);
+                self.core.cluster_cache.lock().put(idx, cluster.clone());
+                Ok(cluster)
+            })
+            .cloned()
     }
 
     /// Reconfigure the cluster cache's byte budget. The cache holds
@@ -1453,13 +1485,13 @@ impl Archive {
     /// single most-recently-used cluster larger than the budget is
     /// kept pinned to avoid permanent misses.
     pub fn set_cluster_cache_max_bytes(&self, max_bytes: usize) {
-        self.core.cluster_cache.lock().unwrap().resize(max_bytes);
+        self.core.cluster_cache.lock().resize(max_bytes);
     }
 
     /// Current cluster-cache byte budget. See
     /// [`Archive::set_cluster_cache_max_bytes`].
     pub fn cluster_cache_max_bytes(&self) -> usize {
-        self.core.cluster_cache.lock().unwrap().max_bytes()
+        self.core.cluster_cache.lock().max_bytes()
     }
 
     /// Snapshot of cluster-cache occupancy + lifetime counters. Useful
@@ -1468,7 +1500,7 @@ impl Archive {
     /// against actual eviction pressure, or surfacing cache health to
     /// telemetry from a long-running server.
     pub fn cluster_cache_stats(&self) -> ClusterCacheStats {
-        self.core.cluster_cache.lock().unwrap().snapshot()
+        self.core.cluster_cache.lock().snapshot()
     }
 
     // ============================================================
@@ -1606,15 +1638,6 @@ impl Archive {
         for i in 0..n {
             let off = self.url_pointer(i)?;
             if let Dirent::Article(a) = self.dirent(off)? {
-                // Reserved mimetype values 0xFFFE / 0xFFFD (linktarget,
-                // deletedentry) are out-of-list by design; treat them
-                // as legal so legacy archives that still carry them
-                // don't trip the check.
-                if a.mimetype == crate::dirent::MIME_LINKTARGET
-                    || a.mimetype == crate::dirent::MIME_DELETED
-                {
-                    continue;
-                }
                 if (a.mimetype as usize) >= mime_count {
                     return Ok(false);
                 }
@@ -2022,63 +2045,73 @@ enum IterKind {
 pub struct EntryIter {
     archive: Archive,
     kind: IterKind,
-    i: u32,
-    n: u32,
+    indices: Range<u32>,
+    init_error: Option<Error>,
+}
+
+impl EntryIter {
+    fn new(archive: &Archive, kind: IterKind, range: Result<Range<u32>>) -> Self {
+        let (indices, init_error) = match range {
+            Ok(indices) => (indices, None),
+            Err(e) => (0..0, Some(e)),
+        };
+        Self {
+            archive: archive.clone(),
+            kind,
+            indices,
+            init_error,
+        }
+    }
 }
 
 impl Iterator for EntryIter {
     type Item = Result<Entry>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if self.i >= self.n {
-            return None;
+        if let Some(e) = self.init_error.take() {
+            return Some(Err(e));
         }
-        let idx = self.i;
-        self.i += 1;
-        let res = match self.kind {
+        let idx = self.indices.next()?;
+        Some(match self.kind {
             IterKind::ByPath => self.archive.entry_by_url_index(idx),
             IterKind::ByTitle => self.archive.entry_by_title_index(idx),
-        };
-        Some(res)
+        })
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let n = self.indices.len() + usize::from(self.init_error.is_some());
+        (n, Some(n))
     }
 }
 
-impl ExactSizeIterator for EntryIter {
-    fn len(&self) -> usize {
-        (self.n - self.i) as usize
-    }
-}
+impl ExactSizeIterator for EntryIter {}
+impl std::iter::FusedIterator for EntryIter {}
 
 /// Iterator returned by [`Archive::by_prefix`] — yields every dirent whose
 /// `(namespace, url)` starts with the given prefix, in URL-pointer order.
 pub struct PrefixIter {
-    archive: Archive,
+    entries: EntryIter,
     ns: u8,
     prefix: String,
-    i: u32,
-    n: u32,
 }
 
 impl Iterator for PrefixIter {
     type Item = Result<Entry>;
     fn next(&mut self) -> Option<Self::Item> {
-        if self.i >= self.n {
-            return None;
-        }
-        let idx = self.i;
-        self.i += 1;
-        let entry = match self.archive.entry_by_url_index(idx) {
+        let entry = match self.entries.next()? {
             Ok(e) => e,
             Err(e) => return Some(Err(e)),
         };
         // First (namespace, url) outside the prefix range ends iteration.
         if entry.namespace() != self.ns || !entry.path().starts_with(&self.prefix) {
-            self.i = self.n;
+            self.entries.indices = 0..0;
             return None;
         }
         Some(Ok(entry))
     }
 }
+
+impl std::iter::FusedIterator for PrefixIter {}
 
 /// Snapshot of an archive's header + aggregate counts, returned by
 /// [`Archive::summary`].
