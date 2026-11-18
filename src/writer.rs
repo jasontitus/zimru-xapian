@@ -571,6 +571,7 @@ pub enum ClusterStrategy {
 ///   metadata, producer buckets, the byte-budgeted encode pipeline, and encoder
 ///   state. See [`Creator::set_max_in_flight_bytes`] for the pipeline limit.
 pub struct Creator {
+    mime_policy: MimePolicy,
     items: Vec<Item>,
     redirections: Vec<Redirection>,
     metadata: Vec<MetadataEntry>,
@@ -608,6 +609,7 @@ impl Default for Creator {
 impl Creator {
     pub fn new() -> Self {
         Creator {
+            mime_policy: MimePolicy::Strict,
             items: Vec::new(),
             redirections: Vec::new(),
             metadata: Vec::new(),
@@ -623,6 +625,17 @@ impl Creator {
             streaming_encode_threshold: STREAMING_ENCODE_THRESHOLD,
             stream: None,
         }
+    }
+
+    /// Create a writer for recreating an existing archive. Historical ZIMs can
+    /// contain the literal media type `undefined`; preserve it only when it is
+    /// present in the source MIME list. All other defaults match [`Creator::new`].
+    pub fn for_recreation(source: &crate::Archive) -> Self {
+        let mut creator = Self::new();
+        if source.mime_list().iter().any(|mime| mime == "undefined") {
+            creator.mime_policy = MimePolicy::PreserveUndefined;
+        }
+        creator
     }
 
     /// Override the chunked-item size cutoff above which bodies take the
@@ -717,7 +730,8 @@ impl Creator {
     /// before altering either the buffered or streaming build.
     pub fn try_add_item(&mut self, item: Item) -> Result<()> {
         let namespace = item.namespace.unwrap_or(b'C');
-        validate_article(namespace, &item.path, &item.title, &item.mimetype)?;
+        self.mime_policy
+            .validate_article(namespace, &item.path, &item.title, &item.mimetype)?;
         self.check_entry_key(namespace, &item.path)?;
         let key = Self::entry_key_digest(namespace, &item.path);
         if let Some(s) = self.stream.as_mut() {
@@ -769,7 +783,8 @@ impl Creator {
         expected_size: Option<u64>,
         compress: Option<bool>,
     ) -> Result<()> {
-        validate_article(namespace.unwrap_or(b'C'), &path, &title, &mimetype)?;
+        self.mime_policy
+            .validate_article(namespace.unwrap_or(b'C'), &path, &title, &mimetype)?;
         self.check_entry_key(namespace.unwrap_or(b'C'), &path)?;
         let key = Self::entry_key_digest(namespace.unwrap_or(b'C'), &path);
         let s = self.stream.as_mut().ok_or_else(|| {
@@ -843,7 +858,8 @@ impl Creator {
         let path = path.into();
         let title = title.into();
         let mimetype = mimetype.into();
-        validate_article(namespace.unwrap_or(b'C'), &path, &title, &mimetype)?;
+        self.mime_policy
+            .validate_article(namespace.unwrap_or(b'C'), &path, &title, &mimetype)?;
         self.check_entry_key(namespace.unwrap_or(b'C'), &path)?;
         let mut content = Vec::new();
         if let Some(n) = size_hint {
@@ -948,7 +964,8 @@ impl Creator {
             mimetype: mimetype.into(),
             value: value.into(),
         };
-        validate_article(b'M', &m.name, &m.name, &m.mimetype)?;
+        self.mime_policy
+            .validate_article(b'M', &m.name, &m.name, &m.mimetype)?;
         self.check_entry_key(b'M', &m.name)?;
         self.record_entry_key(b'M', &m.name);
         if let Some(s) = self.stream.as_mut() {
@@ -1107,6 +1124,7 @@ impl Creator {
             self.uuid,
             self.cluster_strategy,
             self.streaming_encode_threshold,
+            self.mime_policy,
         )?;
         let s = self.stream.insert(stream);
         s.main_path = self.main_path.take();
@@ -1203,9 +1221,20 @@ fn validate_entry(namespace: u8, path: &str, title: &str) -> Result<()> {
     validate_text("title", title)
 }
 
-fn validate_article(namespace: u8, path: &str, title: &str, mime: &str) -> Result<()> {
-    validate_entry(namespace, path, title)?;
-    validate_mime(mime)
+#[derive(Clone, Copy)]
+enum MimePolicy {
+    Strict,
+    PreserveUndefined,
+}
+
+impl MimePolicy {
+    fn validate_article(self, namespace: u8, path: &str, title: &str, mime: &str) -> Result<()> {
+        validate_entry(namespace, path, title)?;
+        if matches!(self, Self::PreserveUndefined) && mime == "undefined" {
+            return Ok(());
+        }
+        validate_mime(mime)
+    }
 }
 
 fn validate_mime(mime: &str) -> Result<()> {
@@ -1370,6 +1399,7 @@ fn build_counter_string(
 /// back. Real libzim's only positional invariant is `mime_list_pos
 /// == 80`, which we honour via the reserved region.
 struct Streamer {
+    mime_policy: MimePolicy,
     /// Either this field or the encode pipeline owns the output. Both are
     /// absent after an irreversible error; only a fresh Creator can start over.
     file: Option<File>,
@@ -1685,6 +1715,7 @@ impl Streamer {
         uuid: [u8; 16],
         cluster_strategy: ClusterStrategy,
         streaming_threshold: usize,
+        mime_policy: MimePolicy,
     ) -> Result<Self> {
         let mut file = std::fs::OpenOptions::new()
             .read(true)
@@ -1710,6 +1741,7 @@ impl Streamer {
             main_path: None,
             cluster_strategy,
             streaming_threshold,
+            mime_policy,
             mimes: Vec::new(),
             mime_index: BTreeMap::new(),
             buckets: BTreeMap::new(),
@@ -1740,7 +1772,7 @@ impl Streamer {
                 "begin_chunked_item: another chunked item is already in flight",
             )));
         }
-        validate_article(
+        self.mime_policy.validate_article(
             meta.namespace.unwrap_or(b'C'),
             &meta.path,
             &meta.title,
@@ -2115,7 +2147,7 @@ impl Streamer {
     /// it belongs to, flush that bucket if it overflows, record the
     /// pending dirent (committed at the bucket's next flush).
     fn push_item(&mut self, item: Item) -> Result<()> {
-        validate_article(
+        self.mime_policy.validate_article(
             item.namespace.unwrap_or(b'C'),
             &item.path,
             &item.title,
