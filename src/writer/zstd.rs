@@ -46,7 +46,10 @@ impl<W: Write> Encoder<W> {
         };
         // Larger histories pay off on high-level text archives. Limit the
         // number of these larger encoder workspaces competing for memory.
-        let long_window = level >= 16 && size > JOB_BYTES as u64;
+        // A single encoder can also retain this history at medium levels
+        // without multiplying workspaces. Parallel fast encoding uses smaller
+        // jobs and shorter overlap, like native multi-worker compression.
+        let long_window = (level >= 16 || (level >= 3 && workers <= 1)) && size > JOB_BYTES as u64;
         let job_log = if long_window { 23 } else { JOB_LOG };
         let job_bytes = 1 << job_log;
         let prefix_bytes = if long_window {

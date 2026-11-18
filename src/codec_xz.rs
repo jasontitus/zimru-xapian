@@ -175,8 +175,8 @@ impl Block {
             return Err(invalid("declared output exceeds byte limit"));
         }
         let block_limit = self.uncompressed.unwrap_or(remaining) as usize + start;
-        // The library's advertised LZMA2 model/range-decoder memory estimate
-        // excludes the dictionary. Allow separate space for the parser,
+        // Subtract the sample's 4 KiB dictionary from the library's estimate
+        // for model/range-decoder memory. Allow separate space for the parser,
         // buffered input, scratch, and overlapping models on a property reset.
         let overhead =
             u64::from(lzma_rust2::lzma2_get_memory_usage(4096) - 4) * 1024 + CONTAINER_MEMORY;
@@ -208,11 +208,13 @@ impl Block {
         // This also keeps a 32-bit process's lazy window addressable for
         // small blocks that declare the maximum four-gigabyte dictionary.
         let dictionary = possible.min(history_budget).max(4096) as u32;
-        let mut decoder = Lzma2Reader::new(
+        let raw_kib = (memory - CONTAINER_MEMORY) / 1024;
+        let mut decoder = Lzma2Reader::new_mem_limit(
             r.take(self.compressed.unwrap_or(u64::MAX)),
             dictionary,
+            u32::try_from(raw_kib).unwrap_or(u32::MAX),
             None,
-        );
+        )?;
         let mut buf = [0; 8192];
         loop {
             // Reading one byte past the permitted output distinguishes an
@@ -439,6 +441,33 @@ mod tests {
             assert_eq!(count, bytes.len() as u64);
             assert!(decode(bytes.as_slice(), count, data.len() as u64, Some(64 << 10)).is_err());
         }
+    }
+
+    #[test]
+    fn budget_covers_overlapping_dictionary_allocations_during_growth() {
+        let data = b"Shared article text. ".repeat(15000);
+        let mut options = LzmaOptions::new_preset(1).unwrap();
+        options.dict_size(192 << 10);
+        let mut filters = Filters::new();
+        filters.lzma2(&options);
+        let stream = Stream::new_stream_encoder(&filters, NativeCheck::Crc64).unwrap();
+        let bytes = native_stream(&data, stream);
+        let overhead =
+            (u64::from(lzma_rust2::lzma2_get_memory_usage(4096)) - 4) * 1024 + CONTAINER_MEMORY;
+        let read = |history| {
+            decode(
+                bytes.as_slice(),
+                bytes.len() as u64,
+                data.len() as u64,
+                Some(overhead + history),
+            )
+        };
+        assert!(read(192 << 10)
+            .unwrap_err()
+            .to_string()
+            .contains("dictionary growth"));
+        let (out, _) = read((192 + 128) << 10).unwrap();
+        assert_eq!(out, data);
     }
 
     #[test]

@@ -1,0 +1,63 @@
+{
+  "reader": {
+    "target_packages": 30,
+    "host_only": 7,
+    "target_with_sites": 18,
+    "first_party_sites": {
+      "zimru": 0,
+      "zstd-rs": 0
+    },
+    "target_site_total": 1519
+  },
+  "writer": {
+    "target_packages": 32,
+    "host_only": 7,
+    "target_with_sites": 18,
+    "first_party_sites": {
+      "zimru": 0,
+      "zstd-rs": 0
+    },
+    "target_site_total": 1519
+  },
+  "cffi": {
+    "target_packages": 32,
+    "host_only": 29,
+    "target_with_sites": 19,
+    "first_party_sites": {
+      "zimru": 182,
+      "zstd-rs": 0
+    },
+    "target_site_total": 1701
+  },
+  "legacy": {
+    "target_packages": 31,
+    "host_only": 7,
+    "target_with_sites": 19,
+    "first_party_sites": {
+      "zimru": 0,
+      "zstd-rs": 0
+    },
+    "target_site_total": 1577
+  },
+  "companion": {
+    "target_packages": 77,
+    "host_only": 15,
+    "target_with_sites": 44,
+    "first_party_sites": {
+      "zimru-xapian": 0,
+      "zimru": 0,
+      "zstd-rs": 0,
+      "zimfile-xapian": 0
+    },
+    "target_site_total": 2251
+  },
+  "engine": {
+    "target_packages": 27,
+    "host_only": 10,
+    "target_with_sites": 15,
+    "first_party_sites": {
+      "zimfile-xapian": 0
+    },
+    "target_site_total": 405
+  }
+}
