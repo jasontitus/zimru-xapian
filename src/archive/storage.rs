@@ -19,6 +19,14 @@ const PAGES_PER_SHARD: usize = 8;
 // ceiling applies to one metadata record, never to the archive or blob size.
 pub(super) const DEFAULT_MAX_METADATA_RECORD: usize = 16 << 20;
 
+#[derive(Clone, Copy)]
+pub(super) enum Access {
+    /// Allow a point lookup to populate fixed slots.
+    Lookup,
+    /// Use existing fixed pages, keeping empty slots available for later lookups.
+    Scan,
+}
+
 #[derive(Debug)]
 enum Source {
     File(File),
@@ -132,9 +140,9 @@ impl Storage {
         Ok(bytes)
     }
 
-    fn pinned_page(&self, number: u64) -> Result<Option<&[u8]>> {
+    fn pinned_page(&self, number: u64, access: Access) -> Result<Option<&[u8]>> {
         let slot = &self.pinned[number as usize % PINNED_PAGES];
-        if slot.get().is_none() {
+        if matches!(access, Access::Lookup) && slot.get().is_none() {
             let page = self.read_page(number)?;
             // Another reader may have filled the slot while this one did I/O.
             // Only complete pages are published. An I/O error can be retried.
@@ -158,6 +166,15 @@ impl Storage {
     /// Try the page containing the metadata record first. Records crossing a
     /// page boundary are retried in successively larger bounded buffers.
     pub(super) fn parse<T>(&self, at: u64, parse: impl Fn(&[u8]) -> Result<T>) -> Result<T> {
+        self.parse_with(at, Access::Lookup, parse)
+    }
+
+    pub(super) fn parse_with<T>(
+        &self,
+        at: u64,
+        access: Access,
+        parse: impl Fn(&[u8]) -> Result<T>,
+    ) -> Result<T> {
         self.range(at, 1)?;
         let max = (self.len - at).min(self.metadata_limit as u64) as usize;
         let parse_prefix = |bytes: &[u8]| match parse(bytes) {
@@ -179,7 +196,7 @@ impl Storage {
         }
         let number = at / PAGE as u64;
         let recent;
-        let page = match self.pinned_page(number)? {
+        let page = match self.pinned_page(number, access)? {
             Some(bytes) => bytes,
             None => {
                 recent = self.recent_page(number)?;
@@ -271,6 +288,17 @@ mod tests {
             file.write_all(&[i]).unwrap();
         }
         let storage = Storage::file(file, DEFAULT_MAX_METADATA_RECORD).unwrap();
+        // A full scan may fill the rotating cache before any point query runs.
+        for i in 0..12u8 {
+            let offset = u64::from(i) * stride;
+            assert_eq!(
+                storage
+                    .parse_with(offset, Access::Scan, |buf| crate::raw::u8_at(buf, 0))
+                    .unwrap(),
+                i
+            );
+        }
+        assert!(storage.pinned.iter().all(|slot| slot.get().is_none()));
         for i in (0..12u8).chain((0..12).rev()) {
             assert_eq!(
                 storage

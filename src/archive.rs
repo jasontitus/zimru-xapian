@@ -28,7 +28,7 @@ use crate::error::{Error, Result};
 use crate::header::{Header, NO_MAIN_PAGE};
 use crate::mime::MimeList;
 use crate::raw;
-use storage::Storage;
+use storage::{Access, Storage};
 
 /// Maximum redirect chain depth before bailing out.
 const MAX_REDIRECTS: usize = 16;
@@ -441,8 +441,15 @@ impl Archive {
     /// Look up an entry by index in the URL-pointer list (i.e. the canonical
     /// path order).
     pub fn entry_by_url_index(&self, idx: u32) -> Result<Entry> {
-        let off = self.url_pointer(idx)?;
-        let dirent = self.dirent(off)?;
+        self.read_entry(idx, Access::Lookup)
+    }
+
+    fn read_entry(&self, idx: u32, access: Access) -> Result<Entry> {
+        let off = self.url_pointer_with(idx, access)?;
+        let dirent = self
+            .core
+            .storage
+            .parse_with(off, access, |buf| Dirent::parse(buf, 0))?;
         Ok(Entry {
             archive: self.clone(),
             url_index: idx,
@@ -1099,7 +1106,7 @@ impl Archive {
         let n = self.core.header.entry_count;
         (0..n)
             .into_par_iter()
-            .map(move |i| self.entry_by_url_index(i))
+            .map(move |i| self.read_entry(i, Access::Scan))
     }
 
     /// Run a closure over every decompressed cluster in parallel. Workers
@@ -1164,11 +1171,11 @@ impl Archive {
         self.core.storage.range(pos, u64::from(count) * width)
     }
 
-    fn pointer(&self, pos: u64, count: u32, idx: u32) -> Result<u64> {
+    fn pointer(&self, pos: u64, count: u32, idx: u32, access: Access) -> Result<u64> {
         self.table_range(pos, count, 8)?;
         self.core
             .storage
-            .parse(pos + u64::from(idx) * 8, |buf| raw::u64_at(buf, 0))
+            .parse_with(pos + u64::from(idx) * 8, access, |buf| raw::u64_at(buf, 0))
     }
 
     fn read_table<T, const WIDTH: usize>(
@@ -1196,11 +1203,15 @@ impl Archive {
     }
 
     fn url_pointer(&self, idx: u32) -> Result<u64> {
+        self.url_pointer_with(idx, Access::Lookup)
+    }
+
+    fn url_pointer_with(&self, idx: u32, access: Access) -> Result<u64> {
         let n = self.core.header.entry_count;
         if idx >= n {
             return Err(Error::BadUrlIndex(idx, n));
         }
-        self.pointer(self.core.header.url_ptr_pos, n, idx)
+        self.pointer(self.core.header.url_ptr_pos, n, idx, access)
     }
 
     fn cluster_pointer(&self, idx: u32) -> Result<u64> {
@@ -1208,7 +1219,7 @@ impl Archive {
         if idx >= n {
             return Err(Error::BadClusterIndex(idx, n));
         }
-        self.pointer(self.core.header.cluster_ptr_pos, n, idx)
+        self.pointer(self.core.header.cluster_ptr_pos, n, idx, Access::Lookup)
     }
 
     /// Public access to a decoded cluster by its index. The cluster is cached
@@ -2073,7 +2084,7 @@ impl Iterator for EntryIter {
         }
         let idx = self.indices.next()?;
         Some(match self.kind {
-            IterKind::ByPath => self.archive.entry_by_url_index(idx),
+            IterKind::ByPath => self.archive.read_entry(idx, Access::Scan),
             IterKind::ByTitle => self.archive.entry_by_title_index(idx),
         })
     }
