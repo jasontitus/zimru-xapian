@@ -18,6 +18,9 @@ mod matcher;
 mod query;
 mod stopwords;
 mod text;
+mod unicode;
+#[cfg(test)]
+mod unicode_tests;
 
 #[cfg(test)]
 mod testdata;

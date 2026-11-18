@@ -55,3 +55,18 @@ libzim, and zimfile, index them.
 License: GPL-3.0-or-later.
 
 The standalone fork reads full-text stopwords from database metadata. Its writer selects the Stopwords ISO list by exact language code, matching xapianbuilder defaults. For example, `en` selects the English list and `eng` selects an empty list. See [stopword provenance and notices](LICENSES/README.md).
+
+## Unicode search data
+
+Queries, titles, index text and snippets share the same character rules. The release engine reads generated Unicode 18.0.0 category flags from a 4,352-byte page directory and 37,376 bytes of unique 256-code-point pages. Its 2,019 canonical replacement mappings and three non-Hangul composition pairs come from the locked ICU4X 2.4.0 data packages (CLDR 49). The Unicode license and copyright notice accompany the data. [Unicode data notice](LICENSES/Unicode-3.0.txt)
+
+The generator checks every scalar. All marks decompose to marks, and every surviving scalar has canonical combining class zero. Removing marks preserves survivor order. Adjacent canonical composition still joins Hangul Jamo and the three Kirat Rai vowel pairs, including across removed marks. The engine keeps the previous whole-string Rust lowercase step, including contextual Greek sigma. Lowercase version therefore depends on the Rust toolchain. The two-page lookup and generated mappings run under the engine's `forbid(unsafe_code)`; query characters never index an unchecked slice. The ICU normalizer and property provider remain development dependencies for data generation and comparison. Other components, including the stemmer's serde dependency, retain their own implementation and review boundaries.
+
+Run from the paired workspace root after fetching the locked dependencies. Omit `--check` to regenerate the four table files, then inspect changes and run the equivalence checks before updating a Unicode version.
+
+```sh
+cargo run --locked --offline --release -p zimfile-xapian --example generate_unicode -- --check
+cargo test --locked --offline --release -p zimfile-xapian --lib unicode_tests
+cargo tree --locked --offline -p zimfile-xapian --edges normal
+cargo bench --locked --offline -p zimfile-xapian --bench unicode_search
+```

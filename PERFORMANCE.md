@@ -66,3 +66,20 @@ A native Xapian 1.4.32 database held one document and 4,096 metadata keys named 
 | Source reads per run | 1,106 | 1,211 |
 
 These measurements cover repeated sequential metadata queries on this generated index. The smaller cache reads additional blocks after eviction.
+
+## Unicode search tables, 2026-11-18
+
+On ARM64 macOS 27.2.1 with rustc 1.99.1, the release microbenchmark interleaved the prior ICU transform and the generated-table transform for twenty measured rounds after two warmups. Each sample processed 256 copies of a repeated input string in one process. The two implementations returned identical normalized text. Property timings below count word characters in a prepared scalar array. Units are median nanoseconds per scalar. [Workloads and methodology](engine/benches/unicode_search.rs)
+
+| Input | ICU normalization | Tables normalization | ICU word class | Tables word class |
+|---|---:|---:|---:|---:|
+| ASCII | 0.08 | 0.08 | 0.66 | 0.64 |
+| Accented Latin | 13.08 | 7.27 | 0.68 | 0.64 |
+| CJK | 29.54 | 15.46 | 2.31 | 0.66 |
+| Mixed scripts | 23.06 | 14.39 | 0.77 | 0.65 |
+| Combining Jamo | 24.09 | 14.57 | 1.73 | 0.69 |
+| CJK compatibility ideographs | 26.51 | 18.44 | 2.18 | 0.70 |
+
+A fresh-process CLI comparison interleaved baseline `7007911` and candidate release binaries, both built against MIT reader `a6d1b4c`. Twenty measured launches of each followed two warmups per query with the host filesystem cache warm. Ordered JSON bytes matched for each pair. Median elapsed milliseconds (previous → tables) were Climate full-text “climate change” 5.13 → 5.23, Climate suggestion “climáte” 6.10 → 6.00, Nollywood full-text “film” 5.20 → 4.86, and the Chinese fixture “地铁” 5.12 → 4.91. These shared-host process startup and query times vary; the in-process microbenchmark isolates normalization. The non-stripped CLI executable sizes from this build increased by 75,360 bytes for `zimsearch` and 41,984 bytes for `xapianbuilder`.
+
+The exhaustive scalar test matched all 1,112,064 scalars for word, decimal and stem category predicates and normalized single-scalar strings. The two real archives matched all 120 ordered top-ten lists. The native Chinese, Japanese, Korean and rare-Han comparison reports matched the earlier baseline reports completely for both Xapian 1.4.32 and 2.0.0. Native 1.4 matched 63/63 ordinary and 6/12 rare-Han queries. Native 2.0 matched 61/63 ordinary and 6/12 rare-Han queries. The historical ranking and Unicode differences remain visible in those checks. Mobile benchmarks remain open. [Real-archive test](tests/real_archives.py) · [Native matrix](tests/cjk_zim_parity.py)

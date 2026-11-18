@@ -5,38 +5,7 @@
 //! language → stemmer mapping (libzim passes ICU's 2-letter code to
 //! `Xapian::Stem`).
 
-use icu_normalizer::{ComposingNormalizerBorrowed, DecomposingNormalizerBorrowed};
-use icu_properties::CodePointMapData;
-use icu_properties::props::{GeneralCategory as GC, GeneralCategoryGroup as G};
-
-/// libzim's `removeAccents`: the ICU transform `Lower; NFD; [:M:] remove; NFC`.
-pub fn remove_accents(s: &str) -> String {
-    if s.is_ascii() {
-        return s.to_ascii_lowercase();
-    }
-    // Lowercase the whole input so Greek sigma retains its word context.
-    // Feed decomposition and mark removal directly into NFC. This also
-    // composes Hangul Jamo that become adjacent after stripping a mark.
-    let lower = s.to_lowercase();
-    let decomposed = DecomposingNormalizerBorrowed::new_nfd().normalize_iter(lower.chars());
-    let stripped = decomposed.filter(|&c| !G::Mark.contains(category(c)));
-    ComposingNormalizerBorrowed::new_nfc()
-        .normalize_iter(stripped)
-        .collect()
-}
-
-pub fn category(c: char) -> GC {
-    CodePointMapData::<GC>::new().get(c)
-}
-
-/// `Unicode::is_wordchar`: letters, marks, numbers, connector punctuation.
-pub fn is_wordchar(c: char) -> bool {
-    let g = G::Letter
-        .union(G::Mark)
-        .union(G::Number)
-        .union(G::ConnectorPunctuation);
-    g.contains(category(c))
-}
+pub(crate) use crate::unicode::{is_digit, is_wordchar, remove_accents};
 
 /// `Unicode::tolower`: the simple lowercase mapping.
 pub fn lower(c: char) -> char {
@@ -46,10 +15,6 @@ pub fn lower(c: char) -> char {
 /// `check_wordchar`: a word character, lowercased.
 fn wordchar(c: char) -> Option<char> {
     is_wordchar(c).then(|| lower(c))
-}
-
-pub fn is_digit(c: char) -> bool {
-    category(c) == GC::DecimalNumber
 }
 
 /// `is_unbroken_script`: the CJK ranges that are split into n-grams.
@@ -90,11 +55,7 @@ pub fn infix(c: char, between_digits: bool) -> Infix {
 
 /// `should_stem`: the term starts with a (non-uppercase) letter.
 pub fn should_stem(term: &str) -> bool {
-    let g = G::LowercaseLetter
-        .union(G::TitlecaseLetter)
-        .union(G::ModifierLetter)
-        .union(G::OtherLetter);
-    term.chars().next().is_some_and(|c| g.contains(category(c)))
+    term.chars().next().is_some_and(crate::unicode::should_stem)
 }
 
 /// Xapian's `parse_terms`: split `text` into terms, calling

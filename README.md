@@ -4,12 +4,12 @@ Two standalone GPL-3.0-or-later command-line tools for ZIM search indexes. `zims
 
 ## Build and search
 
-This review branch builds against the adjacent MIT `zimru` source tree at `ca5e62e965e0667120319906af2aee9791dc94fb`. Clone the two branches of the private repository into sibling directories. The MIT branch retains its own history and license. Build with a current stable Rust toolchain and a system linker. The native interoperability tests also use a C/C++ toolchain and liblzma development files.
+This review branch builds against the adjacent MIT `zimru` source tree at `a6d1b4ccd968c29420135fa3b70ced578509a1e8`. Clone the two branches of the private repository into sibling directories. The MIT branch retains its own history and license. Build with a current stable Rust toolchain and a system linker. The native interoperability tests also use a C/C++ toolchain and liblzma development files.
 
 ```sh
-git clone -b review/zimru-memory-safety https://github.com/jasontitus/zimru-xapian.git zimru
-git -C zimru checkout --detach ca5e62e965e0667120319906af2aee9791dc94fb
-git clone -b review/zimru-storage https://github.com/jasontitus/zimru-xapian.git zimru-xapian
+git clone -b codex/zimru-positioned-source https://github.com/jasontitus/zimru-xapian.git zimru
+git -C zimru checkout --detach a6d1b4ccd968c29420135fa3b70ced578509a1e8
+git clone -b codex/checked-unicode-tables https://github.com/jasontitus/zimru-xapian.git zimru-xapian
 cd zimru-xapian
 ```
 
