@@ -15,9 +15,10 @@ use std::ops::Range;
 use std::path::Path;
 use std::sync::{Arc, OnceLock, Weak};
 
-use parking_lot::Mutex;
+use std::sync::Mutex;
 
-use lru::LruCache;
+mod cache;
+use cache::Cache;
 #[cfg(feature = "legacy-mmap")]
 use memmap2::Mmap;
 use rayon::prelude::*;
@@ -70,7 +71,7 @@ pub const DEFAULT_CLUSTER_CACHE_MAX_BYTES: usize = 64 * 1024 * 1024;
 /// into a permanent miss).
 #[derive(Debug)]
 struct ClusterByteCache {
-    inner: LruCache<u32, Arc<Cluster>>,
+    inner: Cache<u32, Arc<Cluster>>,
     loading: HashMap<u32, Weak<ClusterLoad>>,
     max_bytes: usize,
     current_bytes: usize,
@@ -82,7 +83,7 @@ struct ClusterByteCache {
 impl ClusterByteCache {
     fn new(max_bytes: usize) -> Self {
         Self {
-            inner: LruCache::unbounded(),
+            inner: Cache::new(),
             loading: HashMap::new(),
             max_bytes,
             current_bytes: 0,
@@ -158,7 +159,10 @@ struct ClusterLoad {
 impl Drop for ClusterLoad {
     fn drop(&mut self) {
         if let Some(core) = self.owner.upgrade() {
-            let mut cache = core.cluster_cache.lock();
+            let mut cache = core
+                .cluster_cache
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             if cache
                 .loading
                 .get(&self.idx)
@@ -191,7 +195,7 @@ pub struct ClusterCacheStats {
 #[derive(Debug)]
 struct TableCache<T> {
     value: OnceLock<T>,
-    initializing: parking_lot::Mutex<()>,
+    initializing: Mutex<()>,
 }
 
 impl<T> Default for TableCache<T> {
@@ -208,7 +212,10 @@ impl<T> TableCache<T> {
         if let Some(value) = self.value.get() {
             return Ok(value);
         }
-        let _guard = self.initializing.lock();
+        let _guard = self
+            .initializing
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         if let Some(value) = self.value.get() {
             return Ok(value);
         }
@@ -1543,7 +1550,11 @@ impl Archive {
 
     fn load_cluster(&self, idx: u32) -> Result<Arc<Cluster>> {
         let pending = {
-            let mut cache = self.core.cluster_cache.lock();
+            let mut cache = self
+                .core
+                .cluster_cache
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             if let Some(cluster) = cache.get(idx) {
                 return Ok(cluster);
             }
@@ -1564,7 +1575,11 @@ impl Archive {
             .result
             .get_or_try_init(|| {
                 let cluster = Arc::new(self.cluster_uncached(idx)?);
-                self.core.cluster_cache.lock().put(idx, cluster.clone());
+                self.core
+                    .cluster_cache
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .put(idx, cluster.clone());
                 Ok(cluster)
             })
             .cloned()
@@ -1578,13 +1593,21 @@ impl Archive {
     /// single most-recently-used cluster larger than the budget is
     /// kept pinned to avoid permanent misses.
     pub fn set_cluster_cache_max_bytes(&self, max_bytes: usize) {
-        self.core.cluster_cache.lock().resize(max_bytes);
+        self.core
+            .cluster_cache
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .resize(max_bytes);
     }
 
     /// Current cluster-cache byte budget. See
     /// [`Archive::set_cluster_cache_max_bytes`].
     pub fn cluster_cache_max_bytes(&self) -> usize {
-        self.core.cluster_cache.lock().max_bytes()
+        self.core
+            .cluster_cache
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .max_bytes()
     }
 
     /// Snapshot of cluster-cache occupancy + lifetime counters. Useful
@@ -1593,7 +1616,11 @@ impl Archive {
     /// against actual eviction pressure, or surfacing cache health to
     /// telemetry from a long-running server.
     pub fn cluster_cache_stats(&self) -> ClusterCacheStats {
-        self.core.cluster_cache.lock().snapshot()
+        self.core
+            .cluster_cache
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .snapshot()
     }
 
     // ============================================================

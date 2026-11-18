@@ -2,6 +2,12 @@
 
 The MIT archive reader and writer use Rust for Zstandard, XZ and raw clusters. Normal opens use positioned I/O. The standalone GPL search project reads the same archive through the Rust API, and uses its own raw DEFLATE decoder for Glass tags. Its README pins the paired MIT commit. This private branch is unpublished. Use a checkout or Git dependency so that Cargo includes the vendored codec.
 
+## Reader caches and legacy directories
+
+The positioned reader uses standard-library synchronization, an access-ordered cache keyed by cluster number and eight recent metadata pages per shard. The reader-only dependency graph excludes `lru` and `parking_lot`. The writer retains its optional condition-variable dependency. Other dependencies, including parallel iteration and OS adapters, need their own review. Ordinal directory inspections can read the names of retired deleted/link-target records without assigning them an item payload.
+
+The reader-only, default and all-feature test runs passed 117, 188 and 197 tests respectively on macOS ARM64. A native-verified, checksummed archive containing both retired record types remained readable. An independent reference implementation exercised cache promotion, replacement and eviction. Six fresh processes per reader and operation compared the two Rust cache implementations with libzim on five real archives. Every measured response matched. The 24-article workload on Simple Wikipedia nopic took 29.0 ms in libzim, 56.1 ms with the earlier Rust cache and 53.0 ms with the new one. On Climate the two Rust timings were 23.2 and 23.6 ms. [Cache trials](review-data/safe-cache-20261118.json) · [Native driver methodology, corpus and sample requests](https://github.com/jasontitus/zimru-xapian/blob/b9eff585606a6ea1e741ebddffa0ae672ac16acb/docs/benchmarks/2026-11-18-direct-archive-readers.json)
+
 ## Codec selection
 
 Ten Rust Zstandard libraries decoded 65 native-produced frames from real Kiwix archives byte-for-byte, covering 128,005,261 uncompressed bytes. Three passed the Linux codec-level check for compiler-reported unsafe operations in their runtime dependencies. Avarok's zstd-rs provided both compression and decompression, numeric compression levels, and single-frame job primitives. The fork adds incremental input, explicit allocation and history limits, and frame validation. The code and the licenses for its test fixtures are preserved in the repository. [Fork provenance](../vendor/zstd-rs/ZIMRU.md)

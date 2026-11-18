@@ -2,12 +2,11 @@
 //! bounded page cache; sequential cluster/checksum reads bypass that cache.
 use std::fs::File;
 use std::io::{self, Read};
-use std::num::NonZeroUsize;
 use std::ops::Range;
 use std::sync::{Arc, OnceLock};
 
-use lru::LruCache;
-use parking_lot::Mutex;
+use std::collections::VecDeque;
+use std::sync::Mutex;
 
 use crate::error::{Error, Result};
 
@@ -43,9 +42,25 @@ pub(super) struct Storage {
     // Stable references allow common metadata pages to be read without taking an
     // LRU lock or updating a shared reference count. Collisions use the LRU.
     pinned: [OnceLock<(u64, Box<[u8]>)>; PINNED_PAGES],
-    pages: [Mutex<LruCache<u64, Arc<[u8]>>>; SHARDS],
+    pages: [Mutex<RecentPages>; SHARDS],
     #[cfg(not(any(unix, windows)))]
     seek_lock: Mutex<()>,
+}
+
+// Each shard holds only eight pages. Linear lookup keeps the numeric
+// keys and page handles together without a second hash table.
+#[derive(Debug, Default)]
+struct RecentPages(VecDeque<(u64, Arc<[u8]>)>);
+
+impl RecentPages {
+    fn get(&mut self, number: u64) -> Option<Arc<[u8]>> {
+        let pos = self.0.iter().position(|(id, _)| *id == number)?;
+        if pos != 0 {
+            let row = self.0.remove(pos).unwrap();
+            self.0.push_front(row);
+        }
+        Some(self.0.front().unwrap().1.clone())
+    }
 }
 
 impl Storage {
@@ -74,9 +89,7 @@ impl Storage {
             len,
             metadata_limit,
             pinned: std::array::from_fn(|_| OnceLock::new()),
-            pages: std::array::from_fn(|_| {
-                Mutex::new(LruCache::new(NonZeroUsize::new(PAGES_PER_SHARD).unwrap()))
-            }),
+            pages: std::array::from_fn(|_| Mutex::new(RecentPages::default())),
             #[cfg(not(any(unix, windows)))]
             seek_lock: Mutex::new(()),
         }
@@ -124,7 +137,10 @@ impl Storage {
                 #[cfg(not(any(unix, windows)))]
                 {
                     use std::io::{Seek, SeekFrom};
-                    let _guard = self.seek_lock.lock();
+                    let _guard = self
+                        .seek_lock
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner);
                     let mut fd = file;
                     fd.seek(SeekFrom::Start(at))?;
                     fd.read_exact(out)
@@ -165,11 +181,24 @@ impl Storage {
 
     fn recent_page(&self, number: u64) -> Result<Arc<[u8]>> {
         let shard = &self.pages[number as usize % SHARDS];
-        if let Some(page) = shard.lock().get(&number).cloned() {
+        if let Some(page) = shard
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(number)
+        {
             return Ok(page);
         }
         let page: Arc<[u8]> = self.read_page(number)?.into();
-        shard.lock().put(number, page.clone());
+        let mut pages = shard
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some(existing) = pages.get(number) {
+            return Ok(existing);
+        }
+        if pages.0.len() == PAGES_PER_SHARD {
+            pages.0.pop_back();
+        }
+        pages.0.push_front((number, page.clone()));
         Ok(page)
     }
 

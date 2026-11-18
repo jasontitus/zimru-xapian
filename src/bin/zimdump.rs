@@ -466,9 +466,9 @@ fn cmd_analyze(args: &[String]) -> Result<ExitCode, Error> {
 // ---------------- subcommand: dump ----------------
 
 fn cmd_dump(args: &[String]) -> Result<ExitCode, Error> {
-    use parking_lot::Mutex;
     use rayon::prelude::*;
     use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Mutex;
 
     let opts = parse_opts(args)?;
     let arc = open_archive(&opts)?;
@@ -529,6 +529,7 @@ fn cmd_dump(args: &[String]) -> Result<ExitCode, Error> {
     let record_fallback = |rel: &str, exc: &std::path::Path| {
         fallback_paths
             .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .insert(rel.to_owned(), exc.to_string_lossy().into_owned());
         eprintln!(
             "Wrote {} to {}",
@@ -538,7 +539,10 @@ fn cmd_dump(args: &[String]) -> Result<ExitCode, Error> {
     };
     let log_failure = |dest: &std::path::Path, err: &io::Error| {
         errors.fetch_add(1, Ordering::Relaxed);
-        errlog.lock().push(format!("{}: {}", dest.display(), err));
+        errlog
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .push(format!("{}: {}", dest.display(), err));
     };
     // Write an entry at its natural path, or — when `exiled` says its
     // path is occupied by a shallower entry — directly under
@@ -575,12 +579,15 @@ fn cmd_dump(args: &[String]) -> Result<ExitCode, Error> {
     // article fallbacks as they are written.
     for ((rel, _), &exiled) in redirects.iter().zip(&exiled_redirects) {
         if exiled {
-            fallback_paths.lock().insert(
-                rel.clone(),
-                exception_dest(&exceptions_dir, rel)
-                    .to_string_lossy()
-                    .into_owned(),
-            );
+            fallback_paths
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .insert(
+                    rel.clone(),
+                    exception_dest(&exceptions_dir, rel)
+                        .to_string_lossy()
+                        .into_owned(),
+                );
         }
     }
 
@@ -621,7 +628,11 @@ fn cmd_dump(args: &[String]) -> Result<ExitCode, Error> {
     // and HTML links are relative to the actual destination of the stub,
     // including the exception directory when a source path collides.
     for ((rel, target_rel), exiled) in redirects.iter().zip(exiled_redirects) {
-        let relocated_target = fallback_paths.lock().get(target_rel).cloned();
+        let relocated_target = fallback_paths
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(target_rel)
+            .cloned();
         let target_rel = relocated_target.as_deref().unwrap_or(target_rel);
         write_with_fallback(rel, exiled, &|dest| {
             let target = relative_target(dest, target_rel);
@@ -638,7 +649,9 @@ fn cmd_dump(args: &[String]) -> Result<ExitCode, Error> {
         });
     }
 
-    let lines = errlog.into_inner();
+    let lines = errlog
+        .into_inner()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let mut log = String::new();
     for line in &lines {
         eprintln!("{line}");

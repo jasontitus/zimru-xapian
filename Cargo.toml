@@ -21,7 +21,7 @@ default = ["writer"]
 # Enable the ZIM file writer (`zimru::writer::Creator`) and the
 # `zimrecreate` / `zimwriterfs` binaries. With default features disabled
 # the crate is reader-only. miniz_oxide backs `zimwriterfs -x/--inflateHtml`.
-writer = ["dep:miniz_oxide", "lzma-rust2/encoder"]
+writer = ["dep:miniz_oxide", "lzma-rust2/encoder", "dep:parking_lot"]
 # Compile the `extern "C"` API surface (`zimru::cffi`) and emit the
 # generated `include/zimru.h` from build.rs. Required when consuming
 # zimru as a `cdylib` / `staticlib` from C, C++, or other FFI callers.
@@ -85,9 +85,8 @@ chksum-hash-sha2-256 = "=0.0.1"
 md5 = "0.8.1"
 rayon = "1"
 thiserror = "2"
-lru = "0.19"
-# Poison-free locks for the writer byte budget and zimdump's shared state.
-parking_lot = "0.12"
+# The optional writer uses a condition variable for its byte budget.
+parking_lot = { version = "0.12", optional = true }
 # Pure-Rust gzip (miniz_oxide backend) for `zimwriterfs --inflateHtml`.
 miniz_oxide = { version = "=0.9.1", default-features = false, features = ["with-alloc"], optional = true }
 
