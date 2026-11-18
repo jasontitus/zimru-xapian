@@ -150,7 +150,7 @@ pub unsafe extern "C" fn zimru_creator_set_compression(
 /// Set the compression level for the active algorithm. Range and meaning
 /// are algorithm-specific:
 ///
-/// * Zstd — `1..=22` (negative "fast" levels also accepted by libzstd).
+/// * Zstd — levels 1 through 22, negative fast levels, or 0 for codec default 3.
 ///   Default `19` when `ZSTD_CLEVEL` is unset.
 /// * Xz — `0..=9`. Default `3`.
 /// * None — ignored.

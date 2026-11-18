@@ -1,3 +1,4 @@
+#![forbid(unsafe_code)]
 //! `zimwriterfs` — CLI parity with kiwix `zim-tools`' `zimwriterfs`.
 //!
 //! Packs every file under HTML_DIRECTORY into a single ZIM file. The main
@@ -19,6 +20,10 @@ use std::process::ExitCode;
 
 use zimru::writer::{Creator, Item};
 use zimru::Compression;
+
+#[path = "_gzip_html.rs"]
+mod gzip_html;
+use gzip_html::inflate_gzip;
 
 #[path = "_index_helper.rs"]
 mod index_helper;
@@ -349,8 +354,8 @@ fn run(o: &Opts) -> Result<(), zimru::Error> {
     //   disk-wait across cores; the writer's per-item bookkeeping
     //   stays serial.
     // - Large files (>= threshold): processed one at a time via the
-    //   chunked-streaming path. Don't bother batching — they
-    //   already engage zstdmt internally.
+    //   chunked-streaming path. The Zstd writer can split a large item
+    //   across bounded parallel jobs.
     use rayon::prelude::*;
     use std::io::Read as _;
     const STREAMING_THRESHOLD_BIN: u64 = 4 * 1024 * 1024;
@@ -908,16 +913,6 @@ fn chrono_today_iso() -> String {
     let m = if mp < 10 { mp + 3 } else { mp - 9 };
     let y = if m <= 2 { y + 1 } else { y };
     format!("{y:04}-{m:02}-{d:02}")
-}
-
-/// Inflate a gzipped buffer for `-x/--inflateHtml`. `MultiGzDecoder`
-/// handles multi-member gzip streams (concatenated .gz files).
-fn inflate_gzip(buf: &[u8]) -> std::io::Result<Vec<u8>> {
-    use std::io::Read;
-    let mut out = Vec::with_capacity(buf.len().saturating_mul(4));
-    let mut dec = flate2::read::MultiGzDecoder::new(buf);
-    dec.read_to_end(&mut out)?;
-    Ok(out)
 }
 
 /// Allocate a per-run temp directory next to the output ZIM for the

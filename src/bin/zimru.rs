@@ -1,3 +1,4 @@
+#![forbid(unsafe_code)]
 //! `zimru` CLI — small inspection / extraction tool for ZIM files.
 //!
 //! Subcommands:

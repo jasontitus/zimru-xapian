@@ -22,9 +22,14 @@
 //! payload reaches `cluster_size_target` bytes (default 2 MiB, matching
 //! upstream `zimwriterfs`).
 
+#[path = "writer/xz.rs"]
+mod xz;
+
+mod zstd;
+
 use std::collections::{BTreeMap, HashSet};
 use std::fs::File;
-use std::io::{Seek, SeekFrom, Write as _};
+use std::io::{self, Seek, SeekFrom, Write as _};
 use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -40,10 +45,8 @@ use crate::header::{HEADER_SIZE, MAGIC};
 pub const DEFAULT_CLUSTER_SIZE_TARGET: usize = 2 * 1024 * 1024;
 
 /// Default zstd compression level when the caller pins none and no
-/// `ZSTD_CLEVEL` env override is set. Level 19 is the high-ratio
-/// default we benchmark against libzim (still ~1.5× faster than
-/// libzim at the same level); callers wanting fast-but-large output
-/// can drop it via [`Creator::set_compression_level`] or `ZSTD_CLEVEL`.
+/// `ZSTD_CLEVEL` env override is set. Callers can select a faster level via
+/// [`Creator::set_compression_level`] or `ZSTD_CLEVEL`.
 pub const DEFAULT_ZSTD_LEVEL: i32 = 19;
 
 /// Default mimetype recorded for [`Creator::add_metadata`] entries when
@@ -305,12 +308,9 @@ impl BuildStats {
 ///   continuous encode pipeline, where one worker per CPU
 ///   compresses clusters concurrently. Allocated blob bytes are bounded by
 ///   the pipeline's byte budget, except that one oversized cluster runs alone.
-/// * **Streaming-encode path**: chunks feed a zstd encoder writing
-///   to a per-item temp file; zstdmt parallelises within the one
-///   frame. Memory is bounded at ~zstd-encoder-state (~50 MB)
-///   regardless of item size, but per-item encoder setup and the
-///   finalize-time splice make it the slower path for items that
-///   could have been buffered.
+/// * **Streaming-encode path**: one pledged Zstandard frame is written to a
+///   temporary file in bounded batches of independently compressed blocks.
+///   Memory depends on the compression level and worker count.
 ///
 /// The default cutoff is 256 MiB. Large known-size items use a dedicated
 /// streaming encoder; smaller items use the byte-budgeted cluster pipeline.
@@ -378,7 +378,7 @@ pub(crate) struct ChunkedMeta {
 /// `end_item`. Either accumulating into a `Vec<u8>` (small / unknown
 /// size) or streaming straight through a zstd encoder into a
 /// dedicated cluster on disk (huge known size).
-pub(crate) enum ChunkedInFlight {
+enum ChunkedInFlight {
     /// Buffered: chunks append to `content`. At `finish` time the
     /// assembled body goes through `Streamer::push_item` like a
     /// regular `add_item` call.
@@ -387,17 +387,11 @@ pub(crate) enum ChunkedInFlight {
         content: Vec<u8>,
         expected_size: Option<u64>,
     },
-    /// Streaming-encode: chunks feed a zstd encoder that writes to
-    /// a per-item *temp file* (not the main output). At
-    /// `end_chunked_item` we hand the encoder + temp-file path off
-    /// to a background thread that calls `finish()` while the
-    /// producer continues with subsequent items / feeding the
-    /// encode pipeline. At `finalize` we join the background
-    /// threads and concat each completed temp file into the main
-    /// output in cluster_idx order, then delete the temps.
+    /// A single pledged frame streamed into a scratch file. When complete,
+    /// the file is spliced into the output at its reserved cluster index.
     StreamingZstd {
         meta: ChunkedMeta,
-        encoder: zstd::stream::Encoder<'static, File>,
+        encoder: zstd::Encoder<File>,
         temp_path: TempPath,
         cluster_idx: u32,
         bytes_written: u64,
@@ -422,14 +416,11 @@ pub(crate) enum ChunkedInFlight {
     },
 }
 
-/// Handle to a streaming-encode task that's draining its zstd
-/// encoder in the background. Joined at finalize time; produces
-/// `(cluster_idx, temp_path, encoded_byte_count)` so the finalize
-/// stage can splice the temp file into the main output at the
-/// correct offset.
-pub(crate) struct StreamingTask {
-    pub(crate) cluster_idx: u32,
-    pub(crate) handle: std::thread::JoinHandle<Result<(TempPath, u64)>>,
+/// A finished cluster awaiting its final on-disk position.
+struct StreamedCluster {
+    index: u32,
+    path: TempPath,
+    bytes: u64,
 }
 
 /// Owns cleanup on success, errors, and thread unwinding.
@@ -1435,12 +1426,8 @@ struct Streamer {
     // encoder owns it.
     in_flight: Option<ChunkedInFlight>,
 
-    /// Background streaming-encode tasks that have been handed off
-    /// at `end_chunked_item` and are draining their zstd encoders
-    /// independently. Joined at finalize time; their compressed
-    /// temp-file bytes are spliced into the main output in
-    /// cluster_idx order.
-    streaming_tasks: Vec<StreamingTask>,
+    /// Completed scratch files, in allocation order (one open item at a time).
+    streamed_clusters: Vec<StreamedCluster>,
 
     /// The continuous encode pipeline, if running. While it runs it
     /// owns the output `File` (`self.file` is `None`); the producer
@@ -1510,6 +1497,8 @@ impl Streamer {
         // Dropping a pipeline joins its workers and releases its output file.
         self.pipeline.take();
         self.file.take();
+        self.in_flight.take();
+        self.streamed_clusters.clear();
     }
 
     fn file_mut(&mut self) -> Result<&mut File> {
@@ -1542,11 +1531,19 @@ impl Streamer {
         let job_rx = Arc::new(Mutex::new(job_rx));
         let level = self.compression_level;
 
-        let mut workers = Vec::with_capacity(threads);
+        // Establish ownership before spawning. A later OS spawn failure drops
+        // the sender and joins every worker already waiting for its first job.
+        let mut pipeline = EncodePipeline {
+            job_tx: Some(job_tx),
+            budget,
+            next_sequence: 0,
+            workers: Vec::with_capacity(threads),
+            writer: None,
+        };
         for _ in 0..threads {
             let job_rx = job_rx.clone();
             let out_tx = out_tx.clone();
-            workers.push(std::thread::spawn(move || -> Duration {
+            let worker = std::thread::Builder::new().spawn(move || -> Duration {
                 let mut busy = Duration::ZERO;
                 loop {
                     // Hold the lock only for the recv handshake, not
@@ -1570,12 +1567,13 @@ impl Streamer {
                     }
                 }
                 busy
-            }));
+            })?;
+            pipeline.workers.push(worker);
         }
         drop(out_tx); // writer's recv ends when the last worker exits
 
         let file_pos = self.file_pos;
-        let writer = std::thread::spawn(move || -> Result<PipelineWriterDone> {
+        let writer = std::thread::Builder::new().spawn(move || -> Result<PipelineWriterDone> {
             let mut pos = file_pos;
             let mut offsets: Vec<(u32, u64)> = Vec::new();
             let mut bytes_written = 0u64;
@@ -1598,15 +1596,9 @@ impl Streamer {
             }
             let clusters = offsets.len() as u64;
             Ok((file, pos, offsets, clusters, bytes_written))
-        });
-
-        self.pipeline = Some(EncodePipeline {
-            job_tx: Some(job_tx),
-            budget,
-            next_sequence: 0,
-            workers,
-            writer: Some(writer),
-        });
+        })?;
+        pipeline.writer = Some(writer);
+        self.pipeline = Some(pipeline);
         Ok(())
     }
 
@@ -1728,7 +1720,7 @@ impl Streamer {
             metadata: Vec::new(),
             illustrations: Vec::new(),
             in_flight: None,
-            streaming_tasks: Vec::new(),
+            streamed_clusters: Vec::new(),
             pipeline: None,
             started: Instant::now(),
             stats: BuildStats::default(),
@@ -1794,10 +1786,8 @@ impl Streamer {
             // the extended bit when blob offsets need 8 bytes.
             let info_byte: u8 = if stream_zstd { 5 } else { 1 } | if extended_4 { 0x10 } else { 0 };
 
-            // Per-item temp file. Each streamed item writes to its
-            // own scratch file so multiple streaming-encode tasks
-            // can run concurrently AND the encode pipeline can keep
-            // writing to the main output while we feed.
+            // The streaming item writes its own scratch file, so the regular
+            // cluster pipeline can keep writing to the main output.
             //
             // The scratch file lives next to the output, NOT in
             // `std::env::temp_dir()`: streamed items are ≥256 MiB by
@@ -1831,30 +1821,13 @@ impl Streamer {
             tmp_file.write_all(&[info_byte])?;
 
             if stream_zstd {
-                let level = self.compression_level.unwrap_or_else(|| {
-                    std::env::var("ZSTD_CLEVEL")
-                        .ok()
-                        .and_then(|v| v.parse().ok())
-                        .unwrap_or(DEFAULT_ZSTD_LEVEL)
-                });
-                let mut encoder = zstd::stream::Encoder::new(tmp_file, level)
-                    .map_err(|e| Error::Decompression(format!("zstd init: {e}")))?;
-                // We know the exact frame size (ptr table + body), so
-                // pledge it: the frame header then carries the
-                // content size, letting readers pre-allocate the
-                // decompressed buffer instead of growing one
-                // speculatively.
-                let _ = encoder.set_pledged_src_size(Some(header_len + expected));
-                // Enable zstd's internal multi-worker parallelism for
-                // the streaming-encode path. With per-item temp files
-                // multiple streamed items also run concurrently with
-                // each other (Idea C); each gets fewer workers but
-                // they overlap across items.
-                let workers = rayon::current_num_threads().max(1) as u32;
-                let _ = encoder.multithread(workers);
-                encoder
-                    .write_all(&header)
-                    .map_err(|e| Error::Decompression(format!("zstd header write: {e}")))?;
+                let mut encoder = zstd::Encoder::new(
+                    tmp_file,
+                    header_len + expected,
+                    zstd_level(self.compression_level),
+                    rayon::current_num_threads(),
+                )?;
+                encoder.write_all(&header)?;
 
                 self.in_flight = Some(ChunkedInFlight::StreamingZstd {
                     meta,
@@ -2005,10 +1978,12 @@ impl Streamer {
                 )));
             }
         }
-        match self.in_flight.take() {
-            None => Err(Error::Io(std::io::Error::other(
-                "end_chunked_item: no item in flight",
-            ))),
+        let (meta, file, temp_path, cluster_idx, mime_idx) = match self.in_flight.take() {
+            None => {
+                return Err(Error::Io(std::io::Error::other(
+                    "end_chunked_item: no item in flight",
+                )))
+            }
             Some(ChunkedInFlight::Buffered { meta, content, .. }) => {
                 let result = self.push_item(Item {
                     path: meta.path,
@@ -2021,7 +1996,7 @@ impl Streamer {
                 if result.is_err() {
                     self.abort();
                 }
-                result
+                return result;
             }
             Some(ChunkedInFlight::StreamingZstd {
                 meta,
@@ -2030,45 +2005,7 @@ impl Streamer {
                 cluster_idx,
                 mime_idx,
                 ..
-            }) => {
-                // Commit the dirent now — the cluster_idx is already
-                // allocated. The actual cluster-offset slot stays at
-                // its placeholder 0 until finalize splices the
-                // temp file into the main output.
-                let title = if meta.title.is_empty() {
-                    meta.path.clone()
-                } else {
-                    meta.title
-                };
-                self.dirents.push(RawDirent::Article {
-                    namespace: meta.namespace.unwrap_or(b'C'),
-                    url: meta.path,
-                    title,
-                    mime_idx,
-                    cluster: cluster_idx,
-                    blob: 0,
-                });
-
-                // Hand the encoder + temp path off to a background
-                // thread that drains it via `finish()`. The producer
-                // can immediately begin the next chunked item or
-                // continue feeding the encode pipeline. The bg
-                // thread also returns the final compressed-byte
-                // count so finalize knows how many bytes to splice.
-                let handle = std::thread::spawn(move || -> Result<(TempPath, u64)> {
-                    let file = encoder
-                        .finish()
-                        .map_err(|e| Error::Decompression(format!("zstd finish: {e}")))?;
-                    let bytes = file.metadata()?.len();
-                    drop(file); // close the temp file
-                    Ok((temp_path, bytes))
-                });
-                self.streaming_tasks.push(StreamingTask {
-                    cluster_idx,
-                    handle,
-                });
-                Ok(())
-            }
+            }) => (meta, encoder.finish(), temp_path, cluster_idx, mime_idx),
             Some(ChunkedInFlight::StreamingRaw {
                 meta,
                 temp_file,
@@ -2076,94 +2013,55 @@ impl Streamer {
                 cluster_idx,
                 mime_idx,
                 ..
-            }) => {
-                let title = if meta.title.is_empty() {
-                    meta.path.clone()
-                } else {
-                    meta.title
-                };
-                self.dirents.push(RawDirent::Article {
-                    namespace: meta.namespace.unwrap_or(b'C'),
-                    url: meta.path,
-                    title,
-                    mime_idx,
-                    cluster: cluster_idx,
-                    blob: 0,
-                });
-
-                // Raw passthrough has nothing to drain — close the
-                // temp file synchronously, record total bytes for
-                // finalize splice. Wrap in a JoinHandle-shaped task
-                // so `drain_streaming_tasks` can treat both variants
-                // uniformly.
-                let handle = std::thread::spawn(move || -> Result<(TempPath, u64)> {
-                    let bytes = temp_file.metadata()?.len();
-                    drop(temp_file);
-                    Ok((temp_path, bytes))
-                });
-                self.streaming_tasks.push(StreamingTask {
-                    cluster_idx,
-                    handle,
-                });
-                Ok(())
+            }) => (meta, Ok(temp_file), temp_path, cluster_idx, mime_idx),
+        };
+        let bytes = match file.and_then(|f| f.metadata()) {
+            Ok(metadata) => metadata.len(),
+            Err(error) => {
+                self.abort();
+                return Err(error.into());
             }
-        }
+        };
+        let title = if meta.title.is_empty() {
+            meta.path.clone()
+        } else {
+            meta.title
+        };
+        self.dirents.push(RawDirent::Article {
+            namespace: meta.namespace.unwrap_or(b'C'),
+            url: meta.path,
+            title,
+            mime_idx,
+            cluster: cluster_idx,
+            blob: 0,
+        });
+        self.streamed_clusters.push(StreamedCluster {
+            index: cluster_idx,
+            path: temp_path,
+            bytes,
+        });
+        Ok(())
     }
 
-    /// Drain every background streaming-encode task: join their
-    /// threads, splice each completed temp file into the main
-    /// output in cluster_idx order, update cluster_offsets, and
-    /// delete the temp file. Called once at finalize time.
-    fn drain_streaming_tasks(&mut self) -> Result<()> {
+    /// Append the completed streaming clusters, filling their reserved offsets.
+    fn drain_streamed_clusters(&mut self) -> Result<()> {
         // The splice below appends at `file_pos`, so every pipeline
         // cluster must land first. This also reclaims the file
         // handle for the finalize steps that follow.
         self.shutdown_pipeline()?;
-        if self.streaming_tasks.is_empty() {
-            return Ok(());
-        }
         let phase_start = Instant::now();
-        let tasks = std::mem::take(&mut self.streaming_tasks);
-        // Join every task before returning an error; completed scratch files
-        // are owned by TempPath and cleaned even if a later join or splice fails.
-        let mut completed: Vec<(u32, TempPath, u64)> = Vec::new();
-        let mut error = None;
-        for t in tasks {
-            let result = t
-                .handle
-                .join()
-                .map_err(|_| Error::Io(std::io::Error::other("streaming-encode thread panicked")))
-                .and_then(|result| result);
-            match result {
-                Ok((temp_path, bytes)) => completed.push((t.cluster_idx, temp_path, bytes)),
-                Err(e) if error.is_none() => error = Some(e),
-                Err(_) => {}
+        for cluster in std::mem::take(&mut self.streamed_clusters) {
+            self.cluster_offsets[cluster.index as usize] = self.file_pos;
+            let mut source = File::open(&cluster.path)?;
+            let copied = std::io::copy(&mut source, self.file_mut()?)?;
+            if copied != cluster.bytes {
+                return Err(Error::Io(std::io::Error::other(
+                    "streamed cluster size changed",
+                )));
             }
-        }
-        if let Some(error) = error {
-            return Err(error);
-        }
-        // Splice in cluster_idx order — readers index into
-        // cluster_ptrs by cluster_idx, so the on-disk byte order
-        // doesn't matter, but smaller cluster_idx values having
-        // smaller offsets is nicer for sequential reads.
-        //
-        // `std::io::copy` between two `&mut File`s picks the most
-        // efficient kernel primitive available: `copy_file_range(2)`
-        // on Linux (in-kernel page-cache-aware copy, no userspace
-        // bounce buffer), `fcopyfile(2)` on macOS, falling back to
-        // a read/write loop only on platforms without either. This
-        // captures the io_uring-style "skip user-space copies" win
-        // without depending on io_uring itself.
-        completed.sort_by_key(|(idx, _, _)| *idx);
-        for (cluster_idx, temp_path, bytes) in completed {
-            self.cluster_offsets[cluster_idx as usize] = self.file_pos;
-            let mut tf = std::fs::File::open(&temp_path)?;
-            let copied = std::io::copy(&mut tf, self.file_mut()?)?;
-            drop(tf);
             self.file_pos += copied;
             self.stats.clusters_streamed += 1;
-            self.stats.bytes_clusters_written += bytes;
+            self.stats.bytes_clusters_written += copied;
         }
         self.stats.streaming_encode += phase_start.elapsed();
         Ok(())
@@ -2630,12 +2528,8 @@ impl Streamer {
             self.send_cluster(cluster_idx, vec![listing_bytes], Compression::None)?;
         }
 
-        // 6b.5. Drain background streaming-encode tasks now that
-        //       the producer is done. Each completed temp file's
-        //       compressed bytes are spliced into the main output
-        //       in cluster_idx order; cluster_offsets slots that
-        //       were placeholders get their final positions.
-        self.drain_streaming_tasks()?;
+        // Append the completed streaming clusters in their reserved order.
+        self.drain_streamed_clusters()?;
 
         // 6d. Final title-pointer order — over all dirents
         //     including the listing entry. This is what gets
@@ -2800,9 +2694,6 @@ impl Drop for Streamer {
     fn drop(&mut self) {
         let _ = self.shutdown_pipeline();
         self.in_flight.take();
-        for task in self.streaming_tasks.drain(..) {
-            let _ = task.handle.join();
-        }
     }
 }
 
@@ -2942,20 +2833,35 @@ fn encode_dirent_into(d: &RawDirent, out: &mut Vec<u8>) {
     }
 }
 
+fn zstd_level(explicit: Option<i32>) -> i32 {
+    explicit
+        .or_else(|| std::env::var("ZSTD_CLEVEL").ok()?.parse().ok())
+        .unwrap_or(DEFAULT_ZSTD_LEVEL)
+}
+
 fn encode_cluster(
     blobs: &[Vec<u8>],
     compression: Compression,
     level: Option<i32>,
 ) -> Result<Vec<u8>> {
-    let n = blobs.len();
-    let payload_bytes_sum: usize = blobs.iter().map(|b| b.len()).sum();
-    // 4-byte offsets unless the total would overflow u32.
-    let ptr_size_4 = (n + 1) * 4;
-    let total_4 = ptr_size_4 + payload_bytes_sum;
-    let extended = total_4 > u32::MAX as usize;
-    let ptr_size = if extended { 8 } else { 4 };
-    let header_len = (n + 1) * ptr_size;
-    let payload_len = header_len + payload_bytes_sum;
+    let too_large = || io::Error::new(io::ErrorKind::InvalidInput, "cluster size overflow");
+    let count = blobs.len().checked_add(1).ok_or_else(too_large)?;
+    let data_bytes = blobs
+        .iter()
+        .try_fold(0usize, |sum, blob| sum.checked_add(blob.len()))
+        .ok_or_else(too_large)?;
+    let short_table = count.checked_mul(4).ok_or_else(too_large)?;
+    let short_payload = short_table.checked_add(data_bytes).ok_or_else(too_large)?;
+    let extended = short_payload > u32::MAX as usize;
+    let header_len = if extended {
+        short_table.checked_mul(2).ok_or_else(too_large)?
+    } else {
+        short_table
+    };
+    let payload_len = header_len.checked_add(data_bytes).ok_or_else(too_large)?;
+    if payload_len >= isize::MAX as usize {
+        return Err(too_large().into());
+    }
     let ext_bit = if extended { 0x10u8 } else { 0 };
 
     // Raw clusters: assemble info byte + offsets + blobs straight
@@ -2985,52 +2891,17 @@ fn encode_cluster(
     }
     push_offset(&mut header, cursor, extended);
 
-    // When the caller didn't pin a compression level, honour
-    // `ZSTD_CLEVEL` / `XZ_DEFAULTS` env vars so cross-stack tooling
-    // can configure both real libzim (which respects libzstd's env)
-    // and zimru with the same one-liner. Falls back to the high-ratio
-    // zstd default (DEFAULT_ZSTD_LEVEL) / 3 for xz when no env var is set.
-    fn env_zstd_level() -> Option<i32> {
-        std::env::var("ZSTD_CLEVEL")
-            .ok()
-            .and_then(|v| v.parse().ok())
-    }
     match compression {
         Compression::None => unreachable!("handled above"),
         Compression::Zstd => {
-            let lvl = level.or_else(env_zstd_level).unwrap_or(DEFAULT_ZSTD_LEVEL);
-            // Pin windowLog to ceil(log2(payload.len())). zstd's default
-            // windowLog at level >=20 is 27 (128 MiB window), regardless
-            // of input size. fzstd (the in-browser decoder used by the
-            // streetzim PWA) allocates a buffer of windowLog size per
-            // decompression, so a 128 MiB window for a 1 MiB cluster
-            // imposes 100×+ overhead per chunk fetch when the viewer
-            // typeahead fans out 256 parallel fetches. Pinning the
-            // window to the actual payload size brings the per-decode
-            // allocation down to a few MiB, matching libzim's default
-            // behaviour. Cap at 27 (the zstd / fzstd ceiling) just in
-            // case payloads ever exceed 128 MiB.
-            let payload_len = payload_len.max(1) as u64;
-            let mut window_log = 64 - (payload_len - 1).leading_zeros();
-            // zstd requires windowLog >= 10 (1 KiB). Anything below
-            // that wastes space; clamp.
-            window_log = window_log.clamp(10, 27);
-            // Pledge the exact size so readers can allocate once, while
-            // streaming borrowed blob slices avoids an extra raw payload copy.
-            let mut out = Vec::with_capacity(1 + payload_len as usize / 4);
+            let mut out = Vec::with_capacity(1 + payload_len / 4);
             out.push(5u8 | ext_bit);
-            let mut enc = zstd::stream::Encoder::new(out, lvl)
-                .map_err(|e| Error::Decompression(format!("zstd encoder: {e}")))?;
-            enc.window_log(window_log)
-                .map_err(|e| Error::Decompression(format!("zstd window_log: {e}")))?;
-            enc.set_pledged_src_size(Some(payload_len))
-                .map_err(|e| Error::Decompression(format!("zstd pledged size: {e}")))?;
-            enc.write_all(&header)?;
+            let mut encoder = zstd::Encoder::new(out, payload_len as u64, zstd_level(level), 1)?;
+            encoder.write_all(&header)?;
             for blob in blobs {
-                enc.write_all(blob)?;
+                encoder.write_all(blob)?;
             }
-            enc.finish()
-                .map_err(|e| Error::Decompression(format!("zstd finish: {e}")))
+            Ok(encoder.finish()?)
         }
         Compression::Xz => {
             let lvl = level.unwrap_or(3).clamp(0, 9) as u32;
@@ -3038,15 +2909,7 @@ fn encode_cluster(
             // append — skips the prepend-copy of the compressed body.
             let mut out = Vec::with_capacity(1 + payload_len / 4);
             out.push(4u8 | ext_bit);
-            let options = lzma_rust2::XzOptions::with_preset(lvl);
-            let mut enc = lzma_rust2::XzWriter::new(out, options)
-                .map_err(|e| Error::Decompression(format!("xz encoder: {e}")))?;
-            enc.write_all(&header)?;
-            for blob in blobs {
-                enc.write_all(blob)?;
-            }
-            enc.finish()
-                .map_err(|e| Error::Decompression(format!("xz finish: {e}")))
+            xz::encode(out, lvl, &header, blobs, payload_len).map_err(Error::Io)
         }
     }
 }
@@ -3080,22 +2943,24 @@ mod tests {
         use std::io::Read as _;
 
         let blobs = [Vec::new(), b"first".to_vec(), vec![b'z'; 100_000]];
-        let encoded = encode_cluster(&blobs, Compression::Xz, None).unwrap();
-        let (&cluster_info, xz) = encoded.split_first().unwrap();
-        assert_eq!(cluster_info, 4);
-        assert_eq!(xz[7], 4); // XZ stream flags select CRC64.
-        let mut decoded = Vec::new();
-        xz2::read::XzDecoder::new(xz)
-            .read_to_end(&mut decoded)
-            .unwrap();
         let mut expected: Vec<u8> = [16_u32, 16, 21, 100_021]
             .into_iter()
             .flat_map(u32::to_le_bytes)
             .collect();
-        for blob in blobs {
-            expected.extend_from_slice(&blob);
+        for blob in &blobs {
+            expected.extend_from_slice(blob);
         }
-        assert_eq!(decoded, expected);
+        for level in 0..=9 {
+            let encoded = encode_cluster(&blobs, Compression::Xz, Some(level)).unwrap();
+            let (&cluster_info, xz) = encoded.split_first().unwrap();
+            assert_eq!(cluster_info, 4);
+            assert_eq!(xz[7], 4); // XZ stream flags select CRC64.
+            let mut decoded = Vec::new();
+            xz2::read::XzDecoder::new(xz)
+                .read_to_end(&mut decoded)
+                .unwrap();
+            assert_eq!(decoded, expected, "XZ preset {level}");
+        }
     }
 
     fn output_path(tag: &str) -> std::path::PathBuf {
@@ -3214,6 +3079,22 @@ mod tests {
                 None,
             )
             .unwrap();
+        creator.chunked_item_chunk(b"done").unwrap();
+        creator.end_chunked_item().unwrap();
+        let completed = creator.stream.as_ref().unwrap().streamed_clusters[0]
+            .path
+            .0
+            .clone();
+        creator
+            .begin_chunked_item(
+                None,
+                "other".into(),
+                "".into(),
+                "text/plain".into(),
+                Some(4),
+                None,
+            )
+            .unwrap();
         let Some(ChunkedInFlight::StreamingRaw {
             temp_file,
             temp_path,
@@ -3222,8 +3103,11 @@ mod tests {
         else {
             panic!("expected a streamed raw item");
         };
+        let pending = temp_path.0.clone();
         *temp_file = File::open(temp_path.as_ref()).unwrap();
         assert!(creator.chunked_item_chunk(b"data").is_err());
+        assert!(!pending.exists());
+        assert!(!completed.exists());
         assert!(creator.end_chunked_item().is_err());
         assert!(creator.finish_writing().is_err());
         std::fs::remove_file(path).unwrap();

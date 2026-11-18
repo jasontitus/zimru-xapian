@@ -26,7 +26,7 @@
 //! `offsets[0]` always equals `(N+1) * sizeof(P)` so the blob count `N`
 //! can be derived from the first offset alone.
 
-use std::io::{self, BufRead, BufReader, Read};
+use std::io::{BufReader, Read};
 use std::ops::Range;
 use std::sync::Arc;
 
@@ -104,7 +104,10 @@ impl Cluster {
                 (Arc::from(body), Compression::None)
             }
             COMPRESSION_XZ => (Arc::from(decode_xz(body, limit)?), Compression::Xz),
-            COMPRESSION_ZSTD => (Arc::from(decode_zstd(body, limit)?), Compression::Zstd),
+            COMPRESSION_ZSTD => (
+                Arc::from(crate::codec_zstd::exact(body, limit)?),
+                Compression::Zstd,
+            ),
             COMPRESSION_ZLIB | COMPRESSION_BZIP2 => {
                 return Err(Error::UnsupportedCompression(compression_id));
             }
@@ -180,7 +183,7 @@ impl Cluster {
         }
         let (payload, compression) = match id {
             COMPRESSION_XZ => {
-                let (payload, _) = decode_xz_reader(
+                let (payload, _) = crate::codec_xz::decode(
                     BufReader::new(input.take(body_len)),
                     body_len,
                     limit,
@@ -189,7 +192,12 @@ impl Cluster {
                 (payload, Compression::Xz)
             }
             COMPRESSION_ZSTD => (
-                decode_zstd_region(input, body_len, limit, limits.map(|p| p.zstd_window_log))?,
+                crate::codec_zstd::region(
+                    input,
+                    body_len,
+                    limit,
+                    limits.map(|p| p.zstd_window_log),
+                )?,
                 Compression::Zstd,
             ),
             other => return Err(Error::UnsupportedCompression(other)),
@@ -372,188 +380,13 @@ fn read_off(buf: &[u8], off: usize, extended: bool) -> Result<u64> {
 }
 
 fn decode_xz(body: &[u8], limit: u64) -> Result<Vec<u8>> {
-    let (out, consumed) = decode_xz_reader(body, body.len() as u64, limit, None)?;
+    let (out, consumed) = crate::codec_xz::decode(body, body.len() as u64, limit, None)?;
     if consumed != body.len() as u64 {
         return Err(Error::Decompression(
             "xz: trailing data after stream".into(),
         ));
     }
     Ok(out)
-}
-
-/// liblzma verifies the block checks, index and footer before reporting
-/// StreamEnd. An archive's physical interval can contain padding after that
-/// point. The exact-slice API additionally verifies the consumed length.
-fn decode_xz_reader(
-    mut input: impl BufRead,
-    size: u64,
-    limit: u64,
-    memory: Option<u64>,
-) -> Result<(Vec<u8>, u64)> {
-    use xz2::stream::{Action, Status, Stream};
-
-    let cap = size.saturating_mul(4).min(limit).min(1 << 20) as usize;
-    let mut out = Vec::with_capacity(cap);
-    // Bound liblzma's memory (dictionary sized from the LZMA2 props byte
-    // before any output exists) by the same cap as the output: a tiny
-    // cluster declaring a 4 GiB dictionary is rejected with MemLimit
-    // instead of requesting the allocation.
-    let mut stream =
-        Stream::new_stream_decoder(memory.unwrap_or(limit.saturating_add(64 << 20)), 0)
-            .map_err(|e| Error::Decompression(format!("xz decoder: {e}")))?;
-    let mut chunk = [0; 8192];
-    loop {
-        let bytes = input.fill_buf()?;
-        let action = if bytes.is_empty() {
-            Action::Finish
-        } else {
-            Action::Run
-        };
-        let before_in = stream.total_in();
-        let before_out = stream.total_out();
-        let size = (limit - before_out + 1).min(chunk.len() as u64) as usize;
-        let status = stream
-            .process(bytes, &mut chunk[..size], action)
-            .map_err(|e| Error::Decompression(format!("xz: {e}")))?;
-        if stream.total_out() > limit {
-            return Err(Error::Decompression(format!(
-                "xz: decompressed cluster exceeds {limit}-byte limit"
-            )));
-        }
-        let consumed = (stream.total_in() - before_in) as usize;
-        let written = (stream.total_out() - before_out) as usize;
-        input.consume(consumed);
-        out.extend_from_slice(&chunk[..written]);
-        if status == Status::StreamEnd {
-            return Ok((out, stream.total_in()));
-        }
-        if consumed == 0 && written == 0 {
-            return Err(Error::Decompression("xz: incomplete stream".into()));
-        }
-    }
-}
-
-const ZSTD_BULK_LIMIT: u64 = 8 << 20;
-
-fn small_zstd_pledge(header: &[u8], limit: u64) -> Result<Option<usize>> {
-    if let Ok(Some(size)) = zstd::zstd_safe::get_frame_content_size(header) {
-        if size > limit {
-            return Err(Error::Decompression(format!(
-                "zstd: declared cluster size {size} exceeds {limit}-byte limit"
-            )));
-        }
-        if size <= ZSTD_BULK_LIMIT {
-            return Ok(Some(size as usize));
-        }
-    }
-    Ok(None)
-}
-
-// The pledge is for the first frame only. Use it as a bulk output capacity
-// only after establishing that this input contains exactly one frame.
-fn single_zstd_frame(body: &[u8], size: usize) -> Result<Option<Vec<u8>>> {
-    if zstd::zstd_safe::find_frame_compressed_size(body) != Ok(body.len()) {
-        return Ok(None);
-    }
-    zstd::bulk::decompress(body, size)
-        .map(Some)
-        .map_err(|e| Error::Decompression(format!("zstd: {e}")))
-}
-
-fn decode_zstd(body: &[u8], limit: u64) -> Result<Vec<u8>> {
-    if let Some(size) = small_zstd_pledge(body, limit)? {
-        if let Some(payload) = single_zstd_frame(body, size)? {
-            return Ok(payload);
-        }
-    }
-    let decoder = zstd::stream::read::Decoder::with_buffer(body)
-        .map_err(|e| Error::Decompression(format!("zstd init: {e}")))?;
-    let mut out = Vec::with_capacity(zstd_output_capacity(body.len() as u64, limit));
-    append_zstd_output(decoder, limit, &mut out)?;
-    Ok(out)
-}
-
-fn zstd_output_capacity(size: u64, limit: u64) -> usize {
-    size.saturating_mul(8).min(limit).min(1 << 20) as usize
-}
-
-fn append_zstd_output(decoder: impl Read, limit: u64, out: &mut Vec<u8>) -> Result<()> {
-    decoder
-        .take(limit - out.len() as u64 + 1)
-        .read_to_end(out)
-        .map_err(|e| Error::Decompression(format!("zstd: {e}")))?;
-    if out.len() as u64 > limit {
-        return Err(Error::Decompression(format!(
-            "zstd: decompressed cluster exceeds {limit}-byte limit"
-        )));
-    }
-    Ok(())
-}
-
-/// A file range ends at the next physical structure, which can leave padding
-/// after the cluster. A supplied exact buffer (Cluster::parse) stays strict.
-/// Bytes beginning with a standard or skippable frame magic are treated as
-/// another frame. A partial magic at the end is reported as a short frame.
-fn decode_zstd_region(
-    body: impl Read,
-    size: u64,
-    limit: u64,
-    window_log: Option<u32>,
-) -> Result<Vec<u8>> {
-    let capacity = size.min(zstd::zstd_safe::DCtx::in_size() as u64) as usize;
-    let mut input = BufReader::with_capacity(capacity, body.take(size));
-    if window_log.is_none() && size <= ZSTD_BULK_LIMIT {
-        if let Some(pledge) = small_zstd_pledge(input.fill_buf()?, limit)? {
-            let mut bytes = Vec::new();
-            read_exact_append(&mut input, size, &mut bytes)?;
-            if let Some(payload) = single_zstd_frame(&bytes, pledge)? {
-                return Ok(payload);
-            }
-            return decode_zstd_region_frames(&bytes[..], size, limit, None);
-        }
-    }
-    decode_zstd_region_frames(input, size, limit, window_log)
-}
-
-fn decode_zstd_region_frames(
-    mut input: impl BufRead,
-    size: u64,
-    limit: u64,
-    window_log: Option<u32>,
-) -> Result<Vec<u8>> {
-    let mut out = Vec::with_capacity(zstd_output_capacity(size, limit));
-    let mut prefix = Vec::with_capacity(4);
-    loop {
-        // Reintroduce the lookahead without discarding buffered input after
-        // this frame. The native decoder verifies the frame through its end.
-        let reader = prefix.as_slice().chain(&mut input);
-        let mut decoder = zstd::stream::read::Decoder::with_buffer(reader)
-            .map_err(|e| Error::Decompression(format!("zstd init: {e}")))?
-            .single_frame();
-        if let Some(log) = window_log {
-            decoder
-                .window_log_max(log)
-                .map_err(|e| Error::Decompression(format!("zstd window: {e}")))?;
-        }
-        append_zstd_output(decoder, limit, &mut out)?;
-        prefix.clear();
-        input.by_ref().take(4).read_to_end(&mut prefix)?;
-        if prefix.is_empty() {
-            return Ok(out);
-        }
-        // RFC 8878 standard and skippable little-endian magic numbers.
-        let expected = match prefix[0] {
-            0x28 => [0x28, 0xb5, 0x2f, 0xfd],
-            b @ 0x50..=0x5f => [b, 0x2a, 0x4d, 0x18],
-            _ => return Ok(out),
-        };
-        if !expected.starts_with(&prefix) {
-            return Ok(out);
-        }
-        if prefix.len() < 4 {
-            return Err(io::Error::from(io::ErrorKind::UnexpectedEof).into());
-        }
-    }
 }
 
 #[cfg(test)]
@@ -712,7 +545,7 @@ mod tests {
         bytes.extend(zstd::bulk::compress(&body[8..], 1).unwrap());
         let cluster = Cluster::parse(&bytes).unwrap();
         assert_eq!(cluster.blob(0).unwrap(), b"book");
-        assert!(decode_zstd(&bytes[1..], body.len() as u64 - 1).is_err());
+        assert!(crate::codec_zstd::exact(&bytes[1..], body.len() as u64 - 1).is_err());
         assert!(Cluster::parse(&bytes[..bytes.len() - 1]).is_err());
         bytes.push(0);
         assert!(Cluster::parse(&bytes).is_err());
@@ -778,7 +611,7 @@ mod tests {
     fn rejects_zstd_declared_size_over_limit() {
         let payload = vec![0u8; 1024];
         let compressed = zstd::stream::encode_all(&payload[..], 3).unwrap();
-        match decode_zstd(&compressed, 100) {
+        match crate::codec_zstd::exact(&compressed, 100) {
             Err(Error::Decompression(msg)) => assert!(msg.contains("limit"), "{msg}"),
             other => panic!("unexpected: {other:?}"),
         }

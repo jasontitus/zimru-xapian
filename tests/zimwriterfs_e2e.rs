@@ -541,3 +541,62 @@ fn large_extensionless_html_keeps_title_and_fulltext_body() {
     drop(archive);
     fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn inflate_html_checks_and_joins_gzip_members() {
+    // Independent fixtures from Python zlib. The first member has FTEXT,
+    // FHCRC, an extra field, a filename and a comment.
+    let first = b"\x1f\x8b\x08\x1f\0\0\0\0\0\x03\x06\0XY\x02\0okpage.html\0part\0\x3e\x81\
+                  \xb3\x29\xc9\x2c\xc9\x49\xb5\x73\xaf\xca\x2c\xb0\xd1\x87\xb0\x01\
+                  \xc4\x7d\xb3\x30\x13\0\0\0";
+    let second = b"\x1f\x8b\x08\0\0\0\0\0\0\x03\xb3\x29\xb0\x0b\x4e\x4d\xce\xcf\
+                   \x4b\x51\xc8\x4d\xcd\x4d\x4a\x2d\xd2\xb3\xd1\x2f\xb0\x03\x00\
+                   \x82\x12\xf0\xbf\x15\0\0\0";
+    let root = tmp_dir("gzip");
+    let site = root.join("site");
+    build_site(&site);
+    let packed = root.join("packed.zim");
+    let input = site.join("about.html");
+    let run = || {
+        writer_command()
+            .args(["--without-indexes", "--inflateHtml"])
+            .arg(&site)
+            .arg(&packed)
+            .output()
+            .unwrap()
+    };
+    let joined = [&first[..], &second[..]].concat();
+    fs::write(&input, &joined).unwrap();
+    let result = run();
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    assert_eq!(
+        Archive::open(&packed)
+            .unwrap()
+            .get_bytes("about.html")
+            .unwrap(),
+        b"<title>Gzip</title><p>Second member.</p>"
+    );
+    fs::remove_file(&packed).unwrap();
+
+    // A bad header CRC, data CRC or ISIZE invalidates the file even when the
+    // other member is valid. Trailing bytes must start another gzip member.
+    let mut inputs = Vec::new();
+    for offset in [32, joined.len() - 8, joined.len() - 4] {
+        let mut damaged = joined.clone();
+        damaged[offset] ^= 1;
+        inputs.push(damaged);
+    }
+    inputs.push([&joined[..], b"\0"].concat());
+    for damaged in inputs {
+        fs::write(&input, damaged).unwrap();
+        let result = run();
+        assert!(!result.status.success());
+        assert!(String::from_utf8_lossy(&result.stderr).contains("--inflateHtml"));
+        assert!(!packed.exists());
+    }
+    fs::remove_dir_all(root).unwrap();
+}

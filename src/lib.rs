@@ -64,6 +64,8 @@
 
 pub mod archive;
 pub mod cluster;
+mod codec_xz;
+mod codec_zstd;
 pub mod dirent;
 pub mod error;
 pub mod header;

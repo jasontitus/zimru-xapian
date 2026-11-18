@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 //! `zimdump` — CLI parity with kiwix `zim-tools`' `zimdump`.
 //!
 //! Subcommands (mirrors upstream):
@@ -27,19 +29,10 @@ use zimru::{Archive, Dirent, Entry, Error, NS_ARTICLES_LEGACY};
 
 const VERSION: &str = "zimdump (zimru) 0.1.0\n+ libzim equivalent: zimru 0.1.0";
 
-#[cfg(unix)]
-fn restore_sigpipe() {
-    // SAFETY: install the platform's default action before starting any workers.
-    // A closed output pipe should terminate this CLI as usual for Unix tools.
-    unsafe {
-        libc::signal(libc::SIGPIPE, libc::SIG_DFL);
-    }
-}
-#[cfg(not(unix))]
-fn restore_sigpipe() {}
-
 fn main() -> ExitCode {
-    restore_sigpipe();
+    // Restore normal Unix pipeline termination before starting any workers.
+    #[cfg(unix)]
+    sigpipe::reset();
     let args: Vec<String> = std::env::args().collect();
     let sub = args.get(1).map(String::as_str);
     let res = match sub {

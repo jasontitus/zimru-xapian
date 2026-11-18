@@ -113,10 +113,8 @@
 
 /**
  * Default zstd compression level when the caller pins none and no
- * `ZSTD_CLEVEL` env override is set. Level 19 is the high-ratio
- * default we benchmark against libzim (still ~1.5× faster than
- * libzim at the same level); callers wanting fast-but-large output
- * can drop it via [`Creator::set_compression_level`] or `ZSTD_CLEVEL`.
+ * `ZSTD_CLEVEL` env override is set. Callers can select a faster level via
+ * [`Creator::set_compression_level`] or `ZSTD_CLEVEL`.
  */
 #define DEFAULT_ZSTD_LEVEL 19
 
@@ -675,7 +673,7 @@ bool zimru_creator_set_compression(struct zimru_creator_t *c,
  * Set the compression level for the active algorithm. Range and meaning
  * are algorithm-specific:
  *
- * * Zstd — `1..=22` (negative "fast" levels also accepted by libzstd).
+ * * Zstd — levels 1 through 22, negative fast levels, or 0 for codec default 3.
  *   Default `19` when `ZSTD_CLEVEL` is unset.
  * * Xz — `0..=9`. Default `3`.
  * * None — ignored.

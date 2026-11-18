@@ -1,3 +1,4 @@
+#![forbid(unsafe_code)]
 //! `zimsplit` — split an archive at cluster boundaries.
 //!
 //! Parts are named `<prefix>aa`, `<prefix>ab`, …, `<prefix>zz`, where

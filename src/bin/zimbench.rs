@@ -1,3 +1,4 @@
+#![forbid(unsafe_code)]
 //! `zimbench` — CLI parity with kiwix `zim-tools`' `zimbench`.
 //!
 //! Mirrors upstream's behavior:

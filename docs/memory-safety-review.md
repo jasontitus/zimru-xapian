@@ -1,5 +1,7 @@
 # Memory safety of the ZIM reader, writer and search tools
 
+This report records the pre-migration codec paths at revision `849aa41`. For current production codecs, compatibility and performance, see the [Rust codec review](rust-codecs.md).
+
 Reviewed on Linux x86-64, 18 November 2026. The starting revisions were MIT zimru `061afbc2920c78fc4ecb7211cb9ef4f3655dba35` and the separate GPL search companion `2162bfa8a2334d7fcda567c2491e614a4365baef`. This branch implements the storage migration and XZ encoder migration. **The shipped reader still invokes native code on archive-controlled Zstd and XZ bytes. A fully memory-safe stack remains a goal.** The original MIT license applies to this tree. The GPL index reader and writer stay in their own project. [Original zimru source](https://github.com/jasontitus/zimru/tree/061afbc2920c78fc4ecb7211cb9ef4f3655dba35)
 
 The subsequent review covers fixes to concurrent reads, decoding, writer failures and extraction, plus final-revision benchmarks. [Adversarial and performance review](positioned-reader-review.md)

@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 //! `zimcheck` — CLI parity with kiwix `zim-tools`' `zimcheck`.
 //!
 //! Implements (and prints messages matching) every check upstream supports
@@ -30,16 +32,6 @@ use rayon::prelude::*;
 use zimru::{Archive, Dirent, Entry, Error};
 
 const VERSION: &str = "0.1.0";
-
-#[cfg(unix)]
-fn restore_sigpipe() {
-    // SAFETY: restore the platform default before starting worker threads.
-    unsafe {
-        libc::signal(libc::SIGPIPE, libc::SIG_DFL);
-    }
-}
-#[cfg(not(unix))]
-fn restore_sigpipe() {}
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 enum Check {
@@ -100,7 +92,9 @@ struct Opts {
 }
 
 fn main() -> ExitCode {
-    restore_sigpipe();
+    // Restore normal Unix pipeline termination before starting any workers.
+    #[cfg(unix)]
+    sigpipe::reset();
     let args: Vec<String> = std::env::args().collect();
     let mut o = Opts::default();
     let mut i = 1;

@@ -1,0 +1,13 @@
+[package]
+name = "zstd-rs"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.85"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/Avarok-Cybersecurity/zstd-rs"
+description = "Pure Rust Zstandard codec, vendored with zimru's streaming decoder changes"
+publish = false
+build = false
+
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
+zstd = { version = "0.13", default-features = false, features = ["zdict_builder", "experimental"] }

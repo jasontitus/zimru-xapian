@@ -12,9 +12,11 @@ switching an existing workflow.
 
 ## Build
 
-Install a current stable Rust toolchain, a C/C++ toolchain, and the XZ/liblzma
-development package. On Debian/Ubuntu, install `build-essential pkg-config
-liblzma-dev`; on macOS, install the Xcode command-line tools and `xz`.
+Build the reader, writer and CLIs with stable Rust and a system linker. The
+production codecs compile from Rust source. Interoperability tests also build
+reference codecs with a C toolchain and use liblzma. On Debian/Ubuntu the test
+prerequisites include `build-essential pkg-config liblzma-dev`. On macOS use
+the Xcode command-line tools and `xz`.
 
 ```sh
 cargo build --release
@@ -67,8 +69,9 @@ memory for entry indexes, worker state and the largest active clusters.
 Use `Archive::from_file_with_limits` to select metadata, table and cluster limits.
 Use `Item::read_at` for bounded reads from large uncompressed blobs. The optional
 `legacy-mmap` feature exposes `Archive::from_mmap` for existing callers.
-The review covers native codecs, the C API, transitive unsafe Rust and
-measured performance. [Memory-safety review](docs/memory-safety-review.md) · [Adversarial and performance review](docs/positioned-reader-review.md)
+The [codec review](docs/rust-codecs.md) covers the current compression paths,
+interoperability tests and throughput. Earlier reviews cover the C API,
+transitive unsafe Rust and positioned reads. [Memory-safety review](docs/memory-safety-review.md) · [Adversarial and performance review](docs/positioned-reader-review.md)
 
 ### Tool inventory
 

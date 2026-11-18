@@ -1,3 +1,4 @@
+#![forbid(unsafe_code)]
 //! `zimrecreate` — CLI parity with kiwix `zim-tools`' `zimrecreate`.
 //!
 //! Reads every entry (articles + redirects + metadata + illustrations
