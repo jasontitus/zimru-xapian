@@ -8,12 +8,16 @@ use zimru::{Archive, ArchiveLimits, ClusterReadLimits};
 struct TempDir(PathBuf);
 impl TempDir {
     fn new() -> Self {
+        static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        let sequence = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let stamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        let path =
-            std::env::temp_dir().join(format!("zimru-archive-{}-{stamp}", std::process::id()));
+        let path = std::env::temp_dir().join(format!(
+            "zimru-archive-{}-{stamp}-{sequence}",
+            std::process::id()
+        ));
         fs::create_dir(&path).unwrap();
         Self(path)
     }
@@ -272,4 +276,41 @@ fn simultaneous_readers_share_the_same_cached_payload() {
     let stats = archive.cluster_cache_stats();
     assert_eq!(stats.entries, 1);
     assert_eq!(stats.hits + stats.misses, 12);
+}
+
+#[test]
+fn caller_supplied_source_serves_metadata_and_content_without_a_path() {
+    use std::io;
+    use std::sync::Arc;
+    #[derive(Debug)]
+    struct Bytes(Vec<u8>);
+    impl zimru::archive::PositionedInput for Bytes {
+        fn read_exact_at(&self, offset: u64, destination: &mut [u8]) -> io::Result<()> {
+            let start = usize::try_from(offset).map_err(io::Error::other)?;
+            let input = self
+                .0
+                .get(start..)
+                .and_then(|s| s.get(..destination.len()))
+                .ok_or(io::ErrorKind::UnexpectedEof)?;
+            destination.copy_from_slice(input);
+            Ok(())
+        }
+    }
+    let tmp = TempDir::new();
+    let path = tmp.0.join("virtual.zim");
+    let size = write_archive(File::create(&path).unwrap(), 32);
+    let bytes = Arc::new(Bytes(fs::read(&path).unwrap()));
+    fs::remove_file(path).unwrap();
+    let archive = Archive::from_positioned(bytes.clone(), size, ArchiveLimits::default()).unwrap();
+    let mut tail = [0; 4];
+    assert_eq!(
+        archive
+            .get_item("index")
+            .unwrap()
+            .read_at(28, &mut tail)
+            .unwrap(),
+        4
+    );
+    assert_eq!(&tail, b"tail");
+    assert!(Archive::from_positioned(bytes, 4, ArchiveLimits::default()).is_err());
 }

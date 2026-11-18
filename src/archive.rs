@@ -30,6 +30,14 @@ use crate::mime::MimeList;
 use crate::raw;
 use storage::{Access, Storage};
 
+/// A bounded, random-access byte source. Each read must fill the entire
+/// destination from the given logical offset or report an I/O error. Implementors
+/// must permit concurrent reads without sharing a seek cursor. As with a file,
+/// keep the source bytes stable while the archive retains metadata pages.
+pub trait PositionedInput: std::fmt::Debug + Send + Sync {
+    fn read_exact_at(&self, offset: u64, destination: &mut [u8]) -> io::Result<()>;
+}
+
 /// Maximum redirect chain depth before bailing out.
 const MAX_REDIRECTS: usize = 16;
 
@@ -287,15 +295,22 @@ impl Archive {
 
     /// Open a single file using caller-selected metadata, table and codec limits.
     pub fn from_file_with_limits(file: File, limits: ArchiveLimits) -> Result<Self> {
-        if limits.max_metadata_record_bytes < crate::header::HEADER_SIZE {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "metadata limit is smaller than the ZIM header",
-            )
-            .into());
-        }
         Self::from_storage(
             Storage::file(file, limits.max_metadata_record_bytes)?,
+            limits,
+        )
+    }
+
+    /// Open an externally owned address space, such as a sequence of file
+    /// segments, with the same metadata cache and limits as a regular file.
+    /// `length` is the logical byte length at the time of opening.
+    pub fn from_positioned(
+        input: Arc<dyn PositionedInput>,
+        length: u64,
+        limits: ArchiveLimits,
+    ) -> Result<Self> {
+        Self::from_storage(
+            Storage::positioned(input, length, limits.max_metadata_record_bytes),
             limits,
         )
     }
@@ -307,6 +322,13 @@ impl Archive {
     }
 
     fn from_storage(storage: Storage, limits: ArchiveLimits) -> Result<Self> {
+        if limits.max_metadata_record_bytes < crate::header::HEADER_SIZE {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "metadata limit is smaller than the ZIM header",
+            )
+            .into());
+        }
         let file_len = storage.len();
         let header = storage.parse(0, Header::parse)?;
         if header.entry_count > limits.max_entries || header.cluster_count > limits.max_clusters {
@@ -347,7 +369,7 @@ impl Archive {
     }
 
     /// Read bytes from the archive at a physical offset, using the same open
-    /// file as the metadata lookups. Returns zero at or beyond the file end.
+    /// source as the metadata lookups. Returns zero at or beyond the archive end.
     pub fn read_at(&self, offset: u64, buf: &mut [u8]) -> Result<usize> {
         let end = self.file_len();
         if offset >= end {

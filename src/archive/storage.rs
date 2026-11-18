@@ -30,6 +30,7 @@ pub(super) enum Access {
 #[derive(Debug)]
 enum Source {
     File(File),
+    Positioned(Arc<dyn super::PositionedInput>),
     #[cfg(feature = "legacy-mmap")]
     Mapped(memmap2::Mmap),
 }
@@ -51,6 +52,14 @@ impl Storage {
     pub(super) fn file(file: File, metadata_limit: usize) -> io::Result<Self> {
         let len = file.metadata()?.len();
         Ok(Self::new(Source::File(file), len, metadata_limit))
+    }
+
+    pub(super) fn positioned(
+        input: Arc<dyn super::PositionedInput>,
+        len: u64,
+        metadata_limit: usize,
+    ) -> Self {
+        Self::new(Source::Positioned(input), len, metadata_limit)
     }
 
     #[cfg(feature = "legacy-mmap")]
@@ -87,6 +96,7 @@ impl Storage {
 
     fn read_exact(&self, at: u64, out: &mut [u8]) -> io::Result<()> {
         match &self.source {
+            Source::Positioned(input) => input.read_exact_at(at, out),
             Source::File(file) => {
                 #[cfg(unix)]
                 {
@@ -231,6 +241,7 @@ impl Storage {
 
     pub(super) fn sequential(&self) {
         match &self.source {
+            Source::Positioned(_) => {}
             Source::File(file) => crate::io_hints::hint_sequential(file),
             #[cfg(all(feature = "legacy-mmap", unix))]
             Source::Mapped(map) => {

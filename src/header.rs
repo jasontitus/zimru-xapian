@@ -1,6 +1,6 @@
 //! ZIM file header.
 //!
-//! The header is exactly 80 bytes laid out at the start of the file.
+//! The header begins at byte zero. Modern headers occupy 80 bytes. In early archives the MIME list starts at byte 72 and the trailing checksum field is absent.
 //! Field layout (little-endian):
 //!
 //! | offset | size | field            |
@@ -44,7 +44,7 @@ pub struct Header {
 
 impl Header {
     pub fn parse(buf: &[u8]) -> Result<Self> {
-        if buf.len() < HEADER_SIZE {
+        if buf.len() < 72 {
             return Err(Error::Truncated(buf.len() as u64));
         }
         let magic = raw::u32_at(buf, 0)?;
@@ -76,7 +76,12 @@ impl Header {
             mime_list_pos: raw::u64_at(buf, 56)?,
             main_page: raw::u32_at(buf, 64)?,
             layout_page: raw::u32_at(buf, 68)?,
-            checksum_pos: raw::u64_at(buf, 72)?,
+            // Early headers end at the MIME list at byte 72 and have no checksum field.
+            checksum_pos: if raw::u64_at(buf, 56)? == 72 {
+                0
+            } else {
+                raw::u64_at(buf, 72)?
+            },
         })
     }
 
@@ -99,6 +104,18 @@ impl Header {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mime_list_at_72_has_no_checksum_field() {
+        let mut header = [0; 72];
+        header[..4].copy_from_slice(&MAGIC.to_le_bytes());
+        header[4..6].copy_from_slice(&5u16.to_le_bytes());
+        header[56..64].copy_from_slice(&72u64.to_le_bytes());
+        assert!(!Header::parse(&header).unwrap().has_checksum());
+        let mut with_mime = header.to_vec();
+        with_mime.extend_from_slice(b"text/html\0\0");
+        assert!(!Header::parse(&with_mime).unwrap().has_checksum());
+    }
 
     #[test]
     fn parses_a_synthetic_header() {
