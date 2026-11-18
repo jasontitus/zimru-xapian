@@ -17,5 +17,5 @@ icu_properties = "2.4.0"
 rust-stemmers = "1.2.0"
 
 [dev-dependencies]
-zimru = { git = "https://github.com/jasontitus/zimru", rev = "061afbc2920c78fc4ecb7211cb9ef4f3655dba35", default-features = false }
+zimru = { path = "../../zimru", default-features = false }
 tempfile = "3"

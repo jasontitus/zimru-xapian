@@ -6,4 +6,6 @@ Local changes on 2026-11-17 include standalone packaging, archive access and hel
 
 The bundled default stopword lists come from `jasontitus/xapianbuilder` at `13ff368991850f35ecb2e60037c6385d9992cbdc` and retain their original Stopwords ISO MIT notices. The same builder revision serves as the reference for the JSONL protocol. [Source and notices](https://github.com/jasontitus/xapianbuilder/blob/13ff368991850f35ecb2e60037c6385d9992cbdc/UPSTREAM.md)
 
-The MIT-licensed `jasontitus/zimru` dependency is pinned at `061afbc2920c78fc4ecb7211cb9ef4f3655dba35`. The archive library and the native reference builder are maintained independently. Cargo.lock records the resolved Rust dependency versions. [zimru MIT license](https://github.com/jasontitus/zimru/blob/061afbc2920c78fc4ecb7211cb9ef4f3655dba35/LICENSE)
+The original standalone release pinned the MIT-licensed `jasontitus/zimru` dependency at `061afbc2920c78fc4ecb7211cb9ef4f3655dba35`. The archive library and the native reference builder are maintained independently. Cargo.lock records the resolved Rust dependency versions. [zimru MIT license](https://github.com/jasontitus/zimru/blob/061afbc2920c78fc4ecb7211cb9ef4f3655dba35/LICENSE)
+
+The positioned-I/O review uses the sibling MIT checkout at `cc5abe126f2884047e73c076ff5632da362c2167`. Its parent is the original pinned revision above. Both Cargo manifests use local paths so a reviewer can test changes to either checkout together. See the build instructions in [README.md](README.md).
