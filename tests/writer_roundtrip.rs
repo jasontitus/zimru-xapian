@@ -690,6 +690,7 @@ fn invalid_strings_are_rejected_without_reserving_keys_or_corrupting_output() {
         for mime in [
             "",
             "plain",
+            "undefined",
             "/plain",
             "text/",
             "text/plain\0evil",

@@ -188,7 +188,7 @@ fn run(
     // We're about to walk every entry + every cluster end-to-end,
     // so hint the kernel to prefetch sequentially.
     source.advise_sequential_scan();
-    let mut creator = Creator::new();
+    let mut creator = Creator::for_recreation(&source);
     creator.set_compression(compression);
     if let Some(level) = compression_level {
         creator.set_compression_level(level);
@@ -345,10 +345,12 @@ fn run(
                     // them for downstream readers).
                     let mime = ml
                         .get(a.mimetype)
-                        .unwrap_or("application/octet-stream")
+                        .ok_or(zimru::Error::BadMimeIndex(a.mimetype))?
                         .to_string();
                     let data = entry.get_item(false)?.bytes()?;
-                    if let Some(side) = parse_illustration_path(path) {
+                    if let Some(side) =
+                        parse_illustration_path(path).filter(|_| mime == "image/png")
+                    {
                         creator.try_add_illustration(side, data)?;
                     } else if seen_metadata.insert(path.to_string()) {
                         creator.try_add_metadata_with_mimetype(path, mime, data)?;
@@ -400,7 +402,9 @@ fn run(
             let path = content_path(legacy, entry.namespace(), entry.path())
                 .expect("pending entries belong to the content namespace");
             let title = entry.title();
-            let mime = ml.get(a.mimetype).unwrap_or("application/octet-stream");
+            let mime = ml
+                .get(a.mimetype)
+                .ok_or(zimru::Error::BadMimeIndex(a.mimetype))?;
             // The blob copy here is a known extra memcpy: the bytes
             // already live in the decoded cluster payload, but `Item`
             // owns its body, so threading a borrowed slice through the
@@ -522,7 +526,7 @@ fn parse_illustration_path(path: &str) -> Option<u32> {
     let (w, h) = dims.split_once('x')?;
     let w: u32 = w.parse().ok()?;
     let h: u32 = h.parse().ok()?;
-    if w == h {
+    if w == h && path == format!("Illustration_{w}x{w}@1") {
         Some(w)
     } else {
         None

@@ -72,11 +72,26 @@ fn redirect(namespace: u8, path: &str, target_namespace: u8, target: &str) -> Re
 fn fixture(
     major: u16,
     minor: u16,
-    mut records: Vec<Record>,
+    records: Vec<Record>,
     main: Option<(u8, &str)>,
 ) -> (Vec<u8>, Vec<u64>) {
+    fixture_with_mimes(
+        major,
+        minor,
+        records,
+        main,
+        b"text/html\0text/css\0application/octet-stream\0text/plain\0\0",
+    )
+}
+
+fn fixture_with_mimes(
+    major: u16,
+    minor: u16,
+    mut records: Vec<Record>,
+    main: Option<(u8, &str)>,
+    mimes: &[u8],
+) -> (Vec<u8>, Vec<u64>) {
     records.sort_by(|a, b| (a.namespace, &a.path).cmp(&(b.namespace, &b.path)));
-    let mimes = b"text/html\0text/css\0application/octet-stream\0text/plain\0\0";
     let mut dirents = Vec::new();
     let mut clusters = Vec::new();
     for record in &records {
@@ -279,6 +294,80 @@ fn recreate_keeps_source_and_existing_destination_on_late_read_failure() {
         b"existing destination must survive"
     );
     assert_eq!(fs::read_dir(&dir.0).unwrap().count(), 2);
+}
+
+#[test]
+fn recreation_preserves_the_historical_undefined_mime_verbatim() {
+    let dir = TempDir::new();
+    let source = dir.path("source.zim");
+    let destination = dir.path("recreated.zim");
+    let records = vec![
+        article(b'C', "asset", 0, b"abc\0def"),
+        article(b'M', "Illustration_48x48@1", 1, b"canonical image"),
+        article(b'M', "Illustration_048x048@1", 1, b"distinct image"),
+        article(b'M', "Illustration_96x96@1", 0, b"legacy illustration"),
+    ];
+    let (bytes, _) = fixture_with_mimes(6, 1, records, None, b"undefined\0image/png\0\0");
+    fs::write(&source, &bytes).unwrap();
+    assert_success(recreate(&source, &destination));
+    let output = Archive::open(&destination).unwrap();
+    for (ns, path, mime, body) in [
+        (b'C', "asset", "undefined", &b"abc\0def"[..]),
+        (
+            b'M',
+            "Illustration_48x48@1",
+            "image/png",
+            &b"canonical image"[..],
+        ),
+        (
+            b'M',
+            "Illustration_048x048@1",
+            "image/png",
+            &b"distinct image"[..],
+        ),
+        (
+            b'M',
+            "Illustration_96x96@1",
+            "undefined",
+            &b"legacy illustration"[..],
+        ),
+    ] {
+        let entry = output
+            .namespace_range(ns)
+            .unwrap()
+            .map(|index| output.entry_by_url_index(index).unwrap())
+            .find(|entry| entry.path() == path)
+            .unwrap();
+        let item = entry.item().unwrap();
+        assert_eq!(item.mimetype(), mime);
+        assert_eq!(item.bytes().unwrap(), body);
+    }
+    assert!(output.check().unwrap());
+    assert_eq!(fs::read(&source).unwrap(), bytes);
+}
+
+#[test]
+fn recreation_rejects_other_invalid_mime_even_with_the_legacy_sentinel_present() {
+    let dir = TempDir::new();
+    let source = dir.path("source.zim");
+    let destination = dir.path("existing.zim");
+    fs::write(&destination, b"existing destination").unwrap();
+    for mime in ["Undefined", "undefined ", "invalid", "text/\nplain"] {
+        let mimes = format!("undefined\0{mime}\0\0");
+        let (bytes, _) = fixture_with_mimes(
+            6,
+            1,
+            vec![article(b'C', "bad", 1, b"x")],
+            None,
+            mimes.as_bytes(),
+        );
+        fs::write(&source, &bytes).unwrap();
+        let result = recreate(&source, &destination);
+        assert!(!result.status.success());
+        assert!(String::from_utf8_lossy(&result.stderr).contains("invalid MIME type"));
+        assert_eq!(fs::read(&source).unwrap(), bytes);
+        assert_eq!(fs::read(&destination).unwrap(), b"existing destination");
+    }
 }
 
 #[test]
