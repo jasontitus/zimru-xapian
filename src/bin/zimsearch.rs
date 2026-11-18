@@ -157,7 +157,7 @@ fn run(args: Args) -> Result<()> {
         .into());
     }
     let index = Index::open(Box::new(IndexRange::new(
-        file.try_clone()?,
+        file,
         range.file_offset,
         range.size,
     )))?;
