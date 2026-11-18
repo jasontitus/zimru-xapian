@@ -65,3 +65,5 @@ The companion branch is `review/zimru-storage` and the MIT archive branch is `re
 * On the first checkpoint the reader/default/all-feature test suites passed 104/174/184 tests respectively, plus 6/7/7 doctests. The vendor passed 52 tests. The final two edits refine XZ decoder memory checks and the single-lane Zstandard window. Repeat the complete paired validation on the exact final commits after any subsequent performance changes.
 
 The private writer follow-up measured and corrected the level-3 single-worker long-distance repetition case, including whole-archive output sizes, CPU, peak memory and native decoding. [Level-3 frame history study](level-three-frame-history.md)
+
+The archived level-19 match-finder has also been tested through upstream libzim and is available as an opt-in writer feature. [Archive creation results, size tradeoffs and reproduction](level-nineteen-writer.md)
