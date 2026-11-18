@@ -1,0 +1,165 @@
+{
+  "date": "2026-11-18",
+  "host": {
+    "chip": "Apple M1 Ultra",
+    "os": "macOS 27.2.1 arm64",
+    "rustc": "1.99.1 (58cf8f9c3, Homebrew)",
+    "build": "cargo release, locked dependencies"
+  },
+  "builds": {
+    "native": {
+      "app_base": "f2875d097225509c75a884739960cdf0951ef9fd",
+      "executable_sha256": "6c81ca55459e438e7416d280118cb0fd4b95772d429db01eaf8cc40e93604d4f"
+    },
+    "rust": {
+      "app_base": "f2875d097225509c75a884739960cdf0951ef9fd",
+      "search_adapter_sha256": "978ca96b4ce07d50a6d59c7149f56f05366f69e3cc096acafe183191ae2ad8b6",
+      "mit_reader": "30e171038660edcac518e6144be2466dd8084d8f",
+      "gpl_search": "700791140150142445a5861c5118614a56130dbd",
+      "executable_sha256": "3dc9c2979fd69eea319ea0dc949c23e8618d96182312255735b9352cb6241cc1"
+    }
+  },
+  "comparison": "End-to-end desktop reads. Both builds use native libzim for archive content, including the app that uses Rust for search.",
+  "protocol": {
+    "units": "Milliseconds. Each query opens a fresh local HTTP connection and includes the full response body. No HTML rendering or media decoding is timed.",
+    "steady": "Separate temporary profile and application process for each build and archive with one archive installed. One discarded request then eleven measured requests per operation and build. Request order alternated for each operation and round. The operating-system file cache was not cleared.",
+    "fresh_import_ready": "For each archive and build, one discarded plus five measured launches using separate empty profiles. Measured from process spawn until the app emitted ready after archive admission. This includes import, metadata, profile setup and service startup. Launch order alternated by round.",
+    "snapshot": "The metadata timing calls the normal app snapshot. Each run checked the archive ID, title, language, article and media counts, size, availability and index flags. This measures access to the library snapshot.",
+    "open_article": "Timed the app’s article-open command in an existing reader session. Returned canonical path, MIME, title and availability were checked.",
+    "html": "Complete response buffered by the client. Removing only the reader bridge inserted by the app reconstructed every byte of native zimdump output. Raw response bytes include a unique per-session bridge, so the hashes below identify the verified original archive payload.",
+    "resources": "Every image, media and range payload matched native zimdump bytes; each range returned status 206 and the requested Content-Range. The synthetic media fixture is a deterministic byte pattern. The large HTML fixture contains repetitive text.",
+    "tools": "Native comparison payloads came from zimdump linked to libzim 9.8.2. Timing did not include reference extraction or hash validation.",
+    "limits": "Single Apple Silicon desktop, local read-only source files, multiple processes sharing the host. These cases cannot establish equivalent performance generally or isolate Rust versus C++ archive decoding."
+  },
+  "fields": ["operation", "native_median_ms", "rust_median_ms", "retained_samples_per_build"],
+  "archives": {
+    "ray": {
+      "filename": "wikipedia_en_ray-charles_mini.zim",
+      "archive_bytes": 760553,
+      "archive_sha256": "9aa68a83cf9a7d9449724b6c722f797e2a307e290a34b083df717028cd42330d",
+      "article": "Ray_Charles_in_Person",
+      "timings": [
+        ["fresh_import_ready", 45.2689, 47.8298, 5],
+        ["snapshot", 0.3225, 0.3224, 11],
+        ["open_article", 0.2839, 0.2835, 11],
+        ["html", 0.2895, 0.2986, 11]
+      ],
+      "verified_responses": {
+        "html": {
+          "payload_bytes": 13031,
+          "payload_sha256": "e07c0f229a341a7f6054dd69d7e780bb3afd66d1281021668bbea070f5ed2f8d",
+          "http_status": 200,
+          "mime": "text/html"
+        }
+      }
+    },
+    "simple": {
+      "filename": "wikipedia_en_simple_all_nopic_2026-05.zim",
+      "archive_bytes": 982788870,
+      "archive_sha256": "503b74027d101ec13b272f1ebbd23473e1d260be71a35a71141dfc985fd20d0a",
+      "article": "Solar_System",
+      "timings": [
+        ["fresh_import_ready", 3223.7097, 2838.1223, 5],
+        ["snapshot", 0.4019, 0.3935, 11],
+        ["open_article", 0.3544, 0.3943, 11],
+        ["html", 0.5515, 0.5643, 11]
+      ],
+      "verified_responses": {
+        "html": {
+          "payload_bytes": 439204,
+          "payload_sha256": "28b9283360d072ab0d7e5a6d5a888267b35b9527686ca656a622391ddbd73ee7",
+          "http_status": 200,
+          "mime": "text/html"
+        }
+      }
+    },
+    "media": {
+      "filename": "media.zim",
+      "archive_bytes": 36267,
+      "archive_sha256": "b6ae67465c50da058023dc6f742f1477e63515ae2d49ced6fe5aef3d10d5ea42",
+      "article": "index.html",
+      "timings": [
+        ["fresh_import_ready", 42.4737, 43.6146, 5],
+        ["snapshot", 0.4345, 0.4314, 11],
+        ["open_article", 0.3686, 0.3645, 11],
+        ["html", 0.3722, 0.3753, 11],
+        ["resource_all", 1.5532, 1.5594, 11],
+        ["range_4k", 0.4004, 0.4253, 11],
+        ["range_1m", 0.8272, 0.8355, 11],
+        ["range_end", 0.3415, 0.3462, 11]
+      ],
+      "verified_responses": {
+        "html": {
+          "payload_bytes": 128,
+          "payload_sha256": "197995b30b0e26c72355cdb6df271d6e3b502492ef01707a0c0a4c0e121d93e5",
+          "http_status": 200,
+          "mime": "text/html"
+        },
+        "resource_all": {
+          "payload_bytes": 3145728,
+          "payload_sha256": "f6dd7fec8584ad00219a447071c1fa368a1caee4d9c146083d233713ddccd2c0",
+          "http_status": 200,
+          "mime": "video/mp4"
+        },
+        "range_4k": {
+          "payload_bytes": 4096,
+          "payload_sha256": "b84f1a029c1a87777a69d7eaddfb7f0f1a55d577dc5fe75b9bd7754fbf74ee44",
+          "http_status": 206,
+          "mime": "video/mp4",
+          "range": "bytes=2109497-2113592"
+        },
+        "range_1m": {
+          "payload_bytes": 1048576,
+          "payload_sha256": "4d083586fa4f5f3c8b225c0bf36651f6dea7bae852efffeaa0b1547d5870877f",
+          "http_status": 206,
+          "mime": "video/mp4",
+          "range": "bytes=524307-1572882"
+        },
+        "range_end": {
+          "payload_bytes": 4096,
+          "payload_sha256": "c8f5d0341d54d951a71b136e6e2afcb14d11ed8489a7ae126a8fee0df6ecf193",
+          "http_status": 206,
+          "mime": "video/mp4",
+          "range": "bytes=3141632-3145727"
+        }
+      }
+    },
+    "large_html": {
+      "filename": "large_article.zim",
+      "archive_bytes": 37162,
+      "archive_sha256": "8ef6f90d7846afa6ce35c3e4e9629f895c207238ffd192bceb24a542259353b8",
+      "article": "Large.html",
+      "timings": [
+        ["fresh_import_ready", 45.0374, 44.738, 5],
+        ["snapshot", 0.5548, 0.6524, 11],
+        ["open_article", 0.4309, 0.4298, 11],
+        ["html", 6.9658, 7.1439, 11]
+      ],
+      "verified_responses": {
+        "html": {
+          "payload_bytes": 17826555,
+          "payload_sha256": "43dd14e3d8d159f26ef210f02a2d41138277b40f7548d1d43d97de2670fce465",
+          "http_status": 200,
+          "mime": "text/html"
+        }
+      }
+    },
+    "wp100": {
+      "filename": "wikipedia_en_100_maxi_2024-01.zim",
+      "archive_bytes": 36522122,
+      "archive_sha256": "bde9d73bb1a6b959af6cf4f00ed8f6aac6cf7f4392e28a16a46cd77228b16613",
+      "resource": "I/225_Peptide_Bond-01.jpg.webp",
+      "timings": [
+        ["image", 0.382, 0.3712, 11]
+      ],
+      "verified_responses": {
+        "image": {
+          "payload_bytes": 12414,
+          "payload_sha256": "c11e2ccd984681167b7ea8e333882ca3c801cdb9fa302d402b9a46c266723811",
+          "http_status": 200,
+          "mime": "image/webp"
+        }
+      }
+    }
+  }
+}

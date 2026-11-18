@@ -1,0 +1,145 @@
+{
+  "date": "2026-11-18",
+  "host": {
+    "chip": "Apple M1 Ultra",
+    "os": "macOS 27.2.1 arm64",
+    "rustc": "1.99.1 (58cf8f9c3, Homebrew)",
+    "build": "cargo release, locked dependencies"
+  },
+  "builds": {
+    "native": {
+      "app_base": "f2875d097225509c75a884739960cdf0951ef9fd",
+      "executable_sha256": "6c81ca55459e438e7416d280118cb0fd4b95772d429db01eaf8cc40e93604d4f"
+    },
+    "rust": {
+      "app_base": "f2875d097225509c75a884739960cdf0951ef9fd",
+      "search_adapter_sha256": "978ca96b4ce07d50a6d59c7149f56f05366f69e3cc096acafe183191ae2ad8b6",
+      "mit_reader": "30e171038660edcac518e6144be2466dd8084d8f",
+      "gpl_search": "700791140150142445a5861c5118614a56130dbd",
+      "executable_sha256": "3dc9c2979fd69eea319ea0dc949c23e8618d96182312255735b9352cb6241cc1"
+    }
+  },
+  "inputs": {
+    "ray": {
+      "filename": "wikipedia_en_ray-charles_mini.zim",
+      "bytes": 760553,
+      "sha256": "9aa68a83cf9a7d9449724b6c722f797e2a307e290a34b083df717028cd42330d"
+    },
+    "wp100": {
+      "filename": "wikipedia_en_100_maxi_2024-01.zim",
+      "bytes": 36522122,
+      "sha256": "bde9d73bb1a6b959af6cf4f00ed8f6aac6cf7f4392e28a16a46cd77228b16613"
+    },
+    "simple": {
+      "filename": "wikipedia_en_simple_all_nopic_2026-05.zim",
+      "bytes": 982788870,
+      "sha256": "503b74027d101ec13b272f1ebbd23473e1d260be71a35a71141dfc985fd20d0a"
+    },
+    "chemistry": {
+      "filename": "wikipedia_zh_chemistry_mini.zim",
+      "bytes": 15304454,
+      "sha256": "47849c47e10929b55c954a15691191fa1d5ce07570d787e93d9a1d4cfba3933b"
+    }
+  },
+  "method": {
+    "entry_point": "Release app in headless mode, temporary profile with one real archive, authenticated local API. Search-session and request ownership use the normal app commands.",
+    "configuration": "Spelling disabled, snippets enabled only where marked. The first matrix group uses 10 hits per page. Broad queries use a fresh app per archive. The additional two full-text searches use fresh app processes and the 50-hit page size of Library and Reader.",
+    "timing": "Client elapsed milliseconds, including request and response handling. First is the first request for that case in its process. Warm is the median of repeated identical requests immediately afterward. Archive import and startup precede the measurements. The OS file cache was not cleared between runs. Native and integrated runs were separate.",
+    "rss": "KiB from ps after the workload, while the app was still running. These are resident samples, not peak memory.",
+    "ranking": "Compared every returned title and path in order and the hasMore value. Signatures stayed stable across repetitions. The pairs of SHA-256 digests below cover UTF-8 compact JSON arrays of [archive, mode, query, offset, snippets, ordered [title, path] pairs, hasMore], in the published case order."
+  },
+  "fields": ["archive", "mode", "query", "offset", "snippets", "returned", "hasMore", "native_first_ms", "rust_first_ms", "native_warm_ms", "rust_warm_ms", "native_total", "rust_total"],
+  "standard": {
+    "page_size": 10,
+    "warm_samples_per_case": 7,
+    "matched_cases": 24,
+    "native_ranking_sha256": "0cf684782d584ce7b31eaecee9026ed7e34a118983d2d4778fe6add589c72987",
+    "rust_ranking_sha256": "0cf684782d584ce7b31eaecee9026ed7e34a118983d2d4778fe6add589c72987",
+    "rss_after_kib_native_rust": {
+      "ray": [33328, 28656],
+      "wp100": [55248, 39168],
+      "simple": [59392, 47120]
+    },
+    "cases": [
+      ["ray", "suggest", "Ray", 0, false, 10, true, 23.078, 5.046, 0.568, 0.856, null, null],
+      ["ray", "suggest", "Ray", 10, false, 10, true, 1.29, 1.063, 0.569, 0.866, null, null],
+      ["ray", "title", "Ray", 0, false, 10, true, 0.68, 0.832, 0.472, 0.769, 100, 76],
+      ["ray", "fulltext", "ray charles", 0, false, 10, true, 0.689, 1.062, 0.44, 0.547, 120, 120],
+      ["ray", "fulltext", "ray charles", 10, false, 10, true, 0.395, 0.559, 0.351, 0.546, 120, 120],
+      ["ray", "combined", "ray charles", 0, false, 10, true, 0.742, 0.902, 0.62, 0.777, 160, 172],
+      ["ray", "fulltext", "ray charles", 0, true, 10, true, 4.713, 3.558, 2.088, 0.793, 120, 120],
+      ["ray", "fulltext", "zzextraneoustermzz", 0, false, 0, false, 0.641, 0.372, 0.574, 0.385, 0, 0],
+      ["wp100", "suggest", "A", 0, false, 10, true, 10.531, 5.197, 1.304, 1.096, null, null],
+      ["wp100", "suggest", "A", 10, false, 10, true, 1.367, 1.278, 1.328, 1.037, null, null],
+      ["wp100", "title", "A", 0, false, 10, true, 1.321, 0.979, 1.29, 0.954, 1100, 976],
+      ["wp100", "fulltext", "water", 0, false, 10, true, 0.505, 0.388, 0.412, 0.348, 73, 73],
+      ["wp100", "fulltext", "water", 10, false, 10, true, 0.519, 0.406, 0.414, 0.36, 73, 73],
+      ["wp100", "combined", "water", 0, false, 10, true, 0.948, 0.616, 0.636, 0.554, 74, 74],
+      ["wp100", "fulltext", "water", 0, true, 10, true, 38.898, 21.067, 22.763, 2.633, 73, 73],
+      ["wp100", "fulltext", "zzextraneoustermzz", 0, false, 0, false, 0.505, 0.38, 0.308, 0.368, 0, 0],
+      ["simple", "suggest", "United", 0, false, 10, true, 29.724, 20.719, 15.652, 11.886, null, null],
+      ["simple", "suggest", "United", 10, false, 10, true, 16.072, 12.319, 15.274, 12.319, null, null],
+      ["simple", "title", "United", 0, false, 10, true, 14.152, 11.877, 14.846, 11.824, 5000, 2409],
+      ["simple", "fulltext", "solar system", 0, false, 10, true, 3.008, 3.351, 2.814, 3.236, 2000, 1012],
+      ["simple", "fulltext", "solar system", 10, false, 10, true, 2.81, 3.426, 2.659, 3.168, 2000, 1012],
+      ["simple", "combined", "solar system", 0, false, 10, true, 3.332, 4.079, 3.179, 3.629, 2008, 1027],
+      ["simple", "fulltext", "solar system", 0, true, 10, true, 18.928, 20.569, 8.322, 4.357, 2000, 1012],
+      ["simple", "fulltext", "zzextraneoustermzz", 0, false, 0, false, 0.507, 0.376, 0.618, 0.352, 0, 0]
+    ]
+  },
+  "broad": {
+    "page_size": 10,
+    "warm_samples_per_case": 3,
+    "matched_cases": 7,
+    "native_ranking_sha256": "51104142f19139d0e8d48f5358f2f54f9c67c0e1725cf15056be924294d9e377",
+    "rust_ranking_sha256": "51104142f19139d0e8d48f5358f2f54f9c67c0e1725cf15056be924294d9e377",
+    "rss_after_kib_native_rust": {
+      "simple": [46224, 33952],
+      "chemistry": [35904, 30352]
+    },
+    "cases": [
+      ["simple", "suggest", "A", 0, false, 10, true, 83.607, 35.061, 58.948, 26.099, null, null],
+      ["simple", "fulltext", "world", 0, false, 10, true, 7.499, 6.653, 5.555, 6.037, 49930, 49930],
+      ["simple", "fulltext", "world", 100, false, 10, true, 6.107, 6.23, 5.934, 6.287, 49930, 49930],
+      ["simple", "fulltext", "world time", 0, false, 10, true, 7.543, 8.257, 7.389, 7.755, 30000, 22572],
+      ["chemistry", "suggest", "化学", 0, false, 10, true, 12.544, 6.21, 1.677, 1.929, null, null],
+      ["chemistry", "title", "化学", 0, false, 10, true, 1.683, 1.837, 1.638, 1.81, 300, 378],
+      ["chemistry", "fulltext", "化学", 0, false, 10, true, 1.141, 0.83, 0.812, 0.671, 1665, 1665]
+    ]
+  },
+  "ui_page": {
+    "page_size": 50,
+    "warm_samples_per_case": 5,
+    "matched_cases": 2,
+    "native_ranking_sha256": "105a4336955672068e279c8a10bf4b0706102df3a305a2129748291a4aab8912",
+    "rust_ranking_sha256": "105a4336955672068e279c8a10bf4b0706102df3a305a2129748291a4aab8912",
+    "rss_after_kib_native_rust": {
+      "simple": [121584, 50928],
+      "wp100": [139152, 43888]
+    },
+    "cases": [
+      ["simple", "fulltext", "solar system", 0, true, 50, true, 104.094, 95.568, 79.401, 8.665, 2000, 1012],
+      ["wp100", "fulltext", "water", 0, true, 50, true, 252.362, 117.501, 221.373, 14.035, 73, 73]
+    ]
+  },
+  "behavior": {
+    "actual_browser": {
+      "engine": "Headless desktop Chrome",
+      "library_suggestion": "Ray (film)",
+      "fulltext_query": "Ray Charles",
+      "opened": "Ray Charles in Person",
+      "rendered_article_text_checked": true
+    },
+    "cancel": {
+      "prefix": "A",
+      "replacement_prefix": "Solar",
+      "retired_requests": 3,
+      "replacement_hits_each": 15,
+      "cancellation_ms": [0.6, 0.5, 0.49]
+    },
+    "no_index": "Single-file and split archives returned the same case-sensitive prefix results as native for the queries A, a, I, Í, and missing.",
+    "split_index": "The full-text index crossed an archive part boundary. Both index flags were available and full-text, combined and title searches returned matches.",
+    "redirected_index": "The app opened a generated archive whose full-text index entry redirected to the index blob. It reported the index and returned Mars, Venus, Earth & sky for basalt."
+  },
+  "limits": ["Desktop macOS with local archives. Other platforms, concurrent device workloads, cold storage and peak memory need separate measurements.", "Result-count estimates and generated snippets can differ from native. Ranking agreement applies to these tested pages."]
+}

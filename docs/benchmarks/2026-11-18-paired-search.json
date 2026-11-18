@@ -1,0 +1,426 @@
+{
+  "archive": "wikipedia_en_simple_all_nopic_2026-05.zim",
+  "archive_sha256": "503b74027d101ec13b272f1ebbd23473e1d260be71a35a71141dfc985fd20d0a",
+  "executables_sha256": {
+    "libzim": "6c81ca55459e438e7416d280118cb0fd4b95772d429db01eaf8cc40e93604d4f",
+    "integrated": "3dc9c2979fd69eea319ea0dc949c23e8618d96182312255735b9352cb6241cc1"
+  },
+  "rounds": [
+    {
+      "round": 1,
+      "build": "libzim",
+      "queries": [
+        {
+          "mode": "fulltext",
+          "query": "solar system",
+          "snippets": true,
+          "count": 50,
+          "ordered_sha256": "ef316561d4265b87112d9a35a9bdc91701a6dc9f07de32fb284ee005047dd245",
+          "first_ms": 84.254,
+          "warm_ms": [
+            71.386,
+            71.581,
+            72.1,
+            71.57,
+            72.67
+          ]
+        },
+        {
+          "mode": "fulltext",
+          "query": "solar system",
+          "snippets": false,
+          "count": 50,
+          "ordered_sha256": "ef316561d4265b87112d9a35a9bdc91701a6dc9f07de32fb284ee005047dd245",
+          "first_ms": 2.875,
+          "warm_ms": [
+            2.843,
+            3.019,
+            3.157,
+            3.052,
+            3.069
+          ]
+        },
+        {
+          "mode": "suggest",
+          "query": "United",
+          "snippets": false,
+          "count": 50,
+          "ordered_sha256": "5f2c649749ed96bbf3f06db0d2ddee6e2e615e108a3f0542783b61c2a6c09d79",
+          "first_ms": 17.056,
+          "warm_ms": [
+            15.658,
+            14.875,
+            16.032,
+            15.232,
+            16.18
+          ]
+        }
+      ],
+      "rss_after_kib": 115536
+    },
+    {
+      "round": 1,
+      "build": "integrated",
+      "queries": [
+        {
+          "mode": "fulltext",
+          "query": "solar system",
+          "snippets": true,
+          "count": 50,
+          "ordered_sha256": "ef316561d4265b87112d9a35a9bdc91701a6dc9f07de32fb284ee005047dd245",
+          "first_ms": 96.333,
+          "warm_ms": [
+            8.832,
+            8.55,
+            8.568,
+            8.508,
+            8.537
+          ]
+        },
+        {
+          "mode": "fulltext",
+          "query": "solar system",
+          "snippets": false,
+          "count": 50,
+          "ordered_sha256": "ef316561d4265b87112d9a35a9bdc91701a6dc9f07de32fb284ee005047dd245",
+          "first_ms": 4.052,
+          "warm_ms": [
+            3.916,
+            3.755,
+            3.727,
+            3.644,
+            3.615
+          ]
+        },
+        {
+          "mode": "suggest",
+          "query": "United",
+          "snippets": false,
+          "count": 50,
+          "ordered_sha256": "5f2c649749ed96bbf3f06db0d2ddee6e2e615e108a3f0542783b61c2a6c09d79",
+          "first_ms": 14.862,
+          "warm_ms": [
+            13.477,
+            13.125,
+            13.101,
+            13.098,
+            13.042
+          ]
+        }
+      ],
+      "rss_after_kib": 53856
+    },
+    {
+      "round": 2,
+      "build": "integrated",
+      "queries": [
+        {
+          "mode": "fulltext",
+          "query": "solar system",
+          "snippets": true,
+          "count": 50,
+          "ordered_sha256": "ef316561d4265b87112d9a35a9bdc91701a6dc9f07de32fb284ee005047dd245",
+          "first_ms": 95.251,
+          "warm_ms": [
+            8.783,
+            8.57,
+            8.48,
+            8.472,
+            8.522
+          ]
+        },
+        {
+          "mode": "fulltext",
+          "query": "solar system",
+          "snippets": false,
+          "count": 50,
+          "ordered_sha256": "ef316561d4265b87112d9a35a9bdc91701a6dc9f07de32fb284ee005047dd245",
+          "first_ms": 4.03,
+          "warm_ms": [
+            3.868,
+            3.764,
+            3.689,
+            3.612,
+            3.558
+          ]
+        },
+        {
+          "mode": "suggest",
+          "query": "United",
+          "snippets": false,
+          "count": 50,
+          "ordered_sha256": "5f2c649749ed96bbf3f06db0d2ddee6e2e615e108a3f0542783b61c2a6c09d79",
+          "first_ms": 14.639,
+          "warm_ms": [
+            13.377,
+            12.971,
+            13.103,
+            12.991,
+            13.04
+          ]
+        }
+      ],
+      "rss_after_kib": 53872
+    },
+    {
+      "round": 2,
+      "build": "libzim",
+      "queries": [
+        {
+          "mode": "fulltext",
+          "query": "solar system",
+          "snippets": true,
+          "count": 50,
+          "ordered_sha256": "ef316561d4265b87112d9a35a9bdc91701a6dc9f07de32fb284ee005047dd245",
+          "first_ms": 89.194,
+          "warm_ms": [
+            73.919,
+            75.802,
+            78.899,
+            72.563,
+            71.916
+          ]
+        },
+        {
+          "mode": "fulltext",
+          "query": "solar system",
+          "snippets": false,
+          "count": 50,
+          "ordered_sha256": "ef316561d4265b87112d9a35a9bdc91701a6dc9f07de32fb284ee005047dd245",
+          "first_ms": 2.969,
+          "warm_ms": [
+            3.032,
+            2.9,
+            2.876,
+            2.765,
+            2.734
+          ]
+        },
+        {
+          "mode": "suggest",
+          "query": "United",
+          "snippets": false,
+          "count": 50,
+          "ordered_sha256": "5f2c649749ed96bbf3f06db0d2ddee6e2e615e108a3f0542783b61c2a6c09d79",
+          "first_ms": 15.827,
+          "warm_ms": [
+            14.945,
+            15.299,
+            15.087,
+            14.906,
+            15.054
+          ]
+        }
+      ],
+      "rss_after_kib": 129216
+    },
+    {
+      "round": 3,
+      "build": "libzim",
+      "queries": [
+        {
+          "mode": "fulltext",
+          "query": "solar system",
+          "snippets": true,
+          "count": 50,
+          "ordered_sha256": "ef316561d4265b87112d9a35a9bdc91701a6dc9f07de32fb284ee005047dd245",
+          "first_ms": 85.948,
+          "warm_ms": [
+            70.933,
+            70.052,
+            69.552,
+            69.268,
+            70.094
+          ]
+        },
+        {
+          "mode": "fulltext",
+          "query": "solar system",
+          "snippets": false,
+          "count": 50,
+          "ordered_sha256": "ef316561d4265b87112d9a35a9bdc91701a6dc9f07de32fb284ee005047dd245",
+          "first_ms": 3.036,
+          "warm_ms": [
+            3.007,
+            2.976,
+            2.953,
+            2.976,
+            2.945
+          ]
+        },
+        {
+          "mode": "suggest",
+          "query": "United",
+          "snippets": false,
+          "count": 50,
+          "ordered_sha256": "5f2c649749ed96bbf3f06db0d2ddee6e2e615e108a3f0542783b61c2a6c09d79",
+          "first_ms": 16.103,
+          "warm_ms": [
+            15.308,
+            15.187,
+            15.22,
+            15.155,
+            16.871
+          ]
+        }
+      ],
+      "rss_after_kib": 104000
+    },
+    {
+      "round": 3,
+      "build": "integrated",
+      "queries": [
+        {
+          "mode": "fulltext",
+          "query": "solar system",
+          "snippets": true,
+          "count": 50,
+          "ordered_sha256": "ef316561d4265b87112d9a35a9bdc91701a6dc9f07de32fb284ee005047dd245",
+          "first_ms": 99.206,
+          "warm_ms": [
+            9.008,
+            9.781,
+            9.355,
+            9.41,
+            9.349
+          ]
+        },
+        {
+          "mode": "fulltext",
+          "query": "solar system",
+          "snippets": false,
+          "count": 50,
+          "ordered_sha256": "ef316561d4265b87112d9a35a9bdc91701a6dc9f07de32fb284ee005047dd245",
+          "first_ms": 4.029,
+          "warm_ms": [
+            4.134,
+            4.145,
+            4.124,
+            4.144,
+            4.085
+          ]
+        },
+        {
+          "mode": "suggest",
+          "query": "United",
+          "snippets": false,
+          "count": 50,
+          "ordered_sha256": "5f2c649749ed96bbf3f06db0d2ddee6e2e615e108a3f0542783b61c2a6c09d79",
+          "first_ms": 14.514,
+          "warm_ms": [
+            14.012,
+            14.058,
+            14.052,
+            13.941,
+            14.022
+          ]
+        }
+      ],
+      "rss_after_kib": 54304
+    },
+    {
+      "round": 4,
+      "build": "integrated",
+      "queries": [
+        {
+          "mode": "fulltext",
+          "query": "solar system",
+          "snippets": true,
+          "count": 50,
+          "ordered_sha256": "ef316561d4265b87112d9a35a9bdc91701a6dc9f07de32fb284ee005047dd245",
+          "first_ms": 96.852,
+          "warm_ms": [
+            8.813,
+            8.608,
+            8.507,
+            8.444,
+            8.55
+          ]
+        },
+        {
+          "mode": "fulltext",
+          "query": "solar system",
+          "snippets": false,
+          "count": 50,
+          "ordered_sha256": "ef316561d4265b87112d9a35a9bdc91701a6dc9f07de32fb284ee005047dd245",
+          "first_ms": 3.976,
+          "warm_ms": [
+            3.826,
+            3.673,
+            3.604,
+            3.56,
+            3.546
+          ]
+        },
+        {
+          "mode": "suggest",
+          "query": "United",
+          "snippets": false,
+          "count": 50,
+          "ordered_sha256": "5f2c649749ed96bbf3f06db0d2ddee6e2e615e108a3f0542783b61c2a6c09d79",
+          "first_ms": 14.7,
+          "warm_ms": [
+            13.227,
+            13.02,
+            13.361,
+            13.022,
+            13.032
+          ]
+        }
+      ],
+      "rss_after_kib": 53984
+    },
+    {
+      "round": 4,
+      "build": "libzim",
+      "queries": [
+        {
+          "mode": "fulltext",
+          "query": "solar system",
+          "snippets": true,
+          "count": 50,
+          "ordered_sha256": "ef316561d4265b87112d9a35a9bdc91701a6dc9f07de32fb284ee005047dd245",
+          "first_ms": 82.651,
+          "warm_ms": [
+            65.695,
+            67.256,
+            69.142,
+            67.092,
+            65.673
+          ]
+        },
+        {
+          "mode": "fulltext",
+          "query": "solar system",
+          "snippets": false,
+          "count": 50,
+          "ordered_sha256": "ef316561d4265b87112d9a35a9bdc91701a6dc9f07de32fb284ee005047dd245",
+          "first_ms": 2.935,
+          "warm_ms": [
+            2.918,
+            2.799,
+            2.765,
+            2.669,
+            2.681
+          ]
+        },
+        {
+          "mode": "suggest",
+          "query": "United",
+          "snippets": false,
+          "count": 50,
+          "ordered_sha256": "5f2c649749ed96bbf3f06db0d2ddee6e2e615e108a3f0542783b61c2a6c09d79",
+          "first_ms": 16.468,
+          "warm_ms": [
+            14.673,
+            14.216,
+            14.189,
+            14.156,
+            14.143
+          ]
+        }
+      ],
+      "rss_after_kib": 111744
+    }
+  ]
+}
