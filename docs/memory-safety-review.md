@@ -42,6 +42,16 @@ Native liblzma selection also depends on the build environment. The companion re
 
 **Beyond codecs.** Establish a release profile with the C ABI and legacy mapping disabled. Track the target, host/build and test graphs independently. The original ten Linux configurations included 143 distinct Cargo package IDs and 4,427 Rust files. The Glass engine's baseline release graph had 18 target-role packages with unsafe diagnostics despite forbidding unsafe Rust itself. The revised reader build graph fell from 70 to 37 package/versions, including build-time and proc-macro dependencies. The default writer fell from 75 to 51, and the companion from 117 to 95. Re-audit rayon/crossbeam, parking_lot, LRU/collections, flate2/miniz, rustix, Unicode/ICU4X and crypto for the chosen target. Build/FFI tools, native test oracles and shipped archive parsers have different exposure. A practical release claim should explicitly identify the trusted standard library, OS and audited dependency exceptions. A requirement of zero transitive unsafe Rust needs evidence that each reachable dependency meets it.
 
+The compiler also counted the following active sites on the reviewed Linux builds. Each site is a unique primary source location by diagnostic kind. Counts include unsafe functions and attributes. They describe compiled code, not executed defects. Target-package counts omit exclusively build-host dependencies and the precompiled standard library.
+
+| Production profile | First-party unsafe sites, before → after | Target packages with unsafe diagnostics, before → after |
+|---|---:|---:|
+| MIT reader library and CLI tools | 14 → 2 | 25 → 21 |
+| MIT default writer library and tools | 15 → 2 | 28 → 28 |
+| MIT writer, tools and optional C ABI | 191 → 184 | 28 → 28 |
+| GPL search/index tools with the MIT archive reader | 4 → 0 | 57 → 49 |
+| GPL Glass engine alone | 0 → 0 | 18 → 18 |
+
 ## Compatibility, performance and reproduction
 
 * The revised Linux reader, default writer and all-features builds passed **88, 152 and 161** unit/integration tests, plus **6, 7 and 7** doctests respectively. These profiles overlap. Tests included native zim-tools, the external builder and C/C++ smoke programs. Reader-only all-targets compilation, all-features library Clippy and formatting passed.
