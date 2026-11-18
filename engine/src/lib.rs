@@ -27,6 +27,7 @@ use matcher::Match;
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::io::{Seek, Write};
+use std::sync::Arc;
 use text::{Stemmer, parse_terms, remove_accents};
 
 pub use glass::Source;
@@ -46,6 +47,12 @@ pub struct ReaderLimits {
     pub max_posting_bytes: usize,
     /// Maximum distinct nonempty words in the full-text index stoplist.
     pub max_stopwords: usize,
+    /// Maximum number of retained candidates when ranking a deep page.
+    pub max_ranked_hits: usize,
+    /// Maximum bytes of a selected path, snippet, title sort key or collapse key.
+    pub max_result_field_bytes: usize,
+    /// Limit for live title/collapse key bytes and, independently, emitted string bytes.
+    pub max_result_bytes: usize,
 }
 
 impl Default for ReaderLimits {
@@ -57,6 +64,9 @@ impl Default for ReaderLimits {
             max_query_terms: 4096,
             max_posting_bytes: 64 * 1024 * 1024,
             max_stopwords: 65_536,
+            max_ranked_hits: 65_536,
+            max_result_field_bytes: 1 << 20,
+            max_result_bytes: 32 << 20,
         }
     }
 }
@@ -102,16 +112,69 @@ pub struct Hit {
     pub word_count: Option<u32>,
 }
 
+/// A ranked page. Full-text totals count matching documents. Title totals
+/// can include alias matches that collapse into one suggestion.
+#[derive(Debug, PartialEq)]
+pub struct Page<T> {
+    pub hits: Vec<T>,
+    pub total: u64,
+}
+
+impl<T> Page<T> {
+    fn empty() -> Self {
+        Self {
+            hits: Vec::new(),
+            total: 0,
+        }
+    }
+}
+
+/// Stored snippets are archive-provided text. A declared but empty snippet
+/// slot yields Some("") and a missing legacy slot yields None.
+#[derive(Debug, PartialEq)]
+pub struct PageHit {
+    pub hit: Hit,
+    pub snippet: Option<String>,
+}
+
+pub(crate) fn check_cancel(cancelled: &dyn Fn() -> bool) -> Result<()> {
+    if cancelled() {
+        Err(Error::Io(std::io::Error::new(
+            std::io::ErrorKind::Interrupted,
+            "Search cancelled",
+        )))
+    } else {
+        Ok(())
+    }
+}
+
+fn page_window(offset: usize, limit: usize) -> Result<usize> {
+    if limit == 0 {
+        return Ok(0);
+    }
+    offset
+        .checked_add(limit)
+        .ok_or_else(|| Error::Invalid("search page offset overflow".into()))
+}
+
+fn charge_bytes(used: &mut usize, count: usize, max: usize) -> Result<()> {
+    *used = used
+        .checked_add(count)
+        .filter(|&size| size <= max)
+        .ok_or_else(|| Error::Invalid(format!("search results exceed the {max}-byte budget")))?;
+    Ok(())
+}
+
 /// Best results sort first. Title suggestions additionally break weight ties
 /// by the original title bytes. In both modes docid is the final tie-break.
 #[derive(Clone, Debug)]
-struct Rank {
+struct Rank<T> {
     weight: f64,
-    title: Vec<u8>,
+    title: T,
     did: u32,
 }
 
-impl Ord for Rank {
+impl<T: Ord> Ord for Rank<T> {
     fn cmp(&self, other: &Self) -> Ordering {
         other
             .weight
@@ -121,17 +184,24 @@ impl Ord for Rank {
     }
 }
 
-impl PartialOrd for Rank {
+impl<T: Ord> PartialOrd for Rank<T> {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         Some(self.cmp(other))
     }
 }
-impl PartialEq for Rank {
+impl<T: Ord> PartialEq for Rank<T> {
     fn eq(&self, other: &Self) -> bool {
         self.cmp(other) == Ordering::Equal
     }
 }
-impl Eq for Rank {}
+impl<T: Ord> Eq for Rank<T> {}
+
+fn rank_limit(limits: ReaderLimits) -> Error {
+    Error::Invalid(format!(
+        "ranked search window exceeds {} candidates",
+        limits.max_ranked_hits
+    ))
+}
 
 /// The names used by libzim's `valuesmap` metadata. Other names are
 /// permitted. Only the three slots consumed by this reader need storage.
@@ -140,6 +210,8 @@ struct ValueSlots {
     title: Option<u32>,
     target: Option<u32>,
     word_count: Option<u32>,
+    snippet: Option<u32>,
+    legacy: bool,
 }
 
 impl ValueSlots {
@@ -152,6 +224,8 @@ impl ValueSlots {
         if fields.peek().is_none() {
             // libzim's fallback for indexes predating named value slots.
             slots.word_count = Some(3);
+            slots.snippet = Some(1);
+            slots.legacy = true;
         }
         for field in fields {
             let (name, value) = field
@@ -166,6 +240,7 @@ impl ValueSlots {
                 "title" => slots.title.get_or_insert(slot),
                 "targetPath" => slots.target.get_or_insert(slot),
                 "wordcount" => slots.word_count.get_or_insert(slot),
+                "snippet" => slots.snippet.get_or_insert(slot),
                 _ => continue,
             };
         }
@@ -173,9 +248,14 @@ impl ValueSlots {
     }
 }
 
-fn slot_value(db: &Db, did: u32, slot: Option<u32>) -> Result<Option<Vec<u8>>> {
+fn slot_value(
+    db: &Db,
+    did: u32,
+    slot: Option<u32>,
+    cancelled: &dyn Fn() -> bool,
+) -> Result<Option<Vec<u8>>> {
     match slot {
-        Some(slot) => db.value(did, slot),
+        Some(slot) => db.value_limited(did, slot, db.limits().max_result_field_bytes, cancelled),
         None => Ok(None),
     }
 }
@@ -221,13 +301,13 @@ impl Index {
         Ok(remove_accents(q))
     }
 
-    fn document_path(&self, did: u32) -> Result<String> {
+    fn document_path(&self, did: u32, remaining: usize) -> Result<String> {
         let bytes = self
             .db
-            .data(did)?
+            .data_limited(did, remaining.min(self.db.limits().max_result_field_bytes))?
             .filter(|s| !s.is_empty())
             .ok_or_else(|| Error::Format(format!("missing document path for docid {did}")))?;
-        String::from_utf8(bytes)
+        String::from_utf8(bytes.into_boxed_slice().into_vec())
             .map_err(|_| Error::Format(format!("invalid UTF-8 document path for docid {did}")))
     }
 
@@ -237,110 +317,230 @@ impl Index {
 
     /// Full-text search: the best `limit` documents for `q`, as libzim ranks them.
     pub fn search(&self, q: &str, limit: usize, lang: &str) -> Result<Vec<Hit>> {
-        if limit == 0 || q.is_empty() {
+        if limit == 0 {
             return Ok(vec![]);
+        }
+        Ok(self
+            .search_page(q, 0, limit, lang, false, &|| false)?
+            .hits
+            .into_iter()
+            .map(|entry| entry.hit)
+            .collect())
+    }
+
+    /// Rank the requested page without materializing paths for earlier hits.
+    /// A zero-length page returns the total only. Cancellation is cooperative.
+    pub fn search_page(
+        &self,
+        q: &str,
+        offset: usize,
+        limit: usize,
+        lang: &str,
+        include_stored_snippets: bool,
+        cancelled: &dyn Fn() -> bool,
+    ) -> Result<Page<PageHit>> {
+        check_cancel(cancelled)?;
+        let window = page_window(offset, limit)?;
+        if q.is_empty() {
+            return Ok(Page::empty());
         }
         let normalized = self.normalize_query(q)?;
         let db = &self.db;
+        let limits = db.limits();
         let stem = self.stemmer(lang)?;
         let metadata = db.metadata("stopwords")?.unwrap_or_default();
-        let words = stopwords::from_metadata(&metadata, db.limits().max_stopwords)?;
+        let words = stopwords::from_metadata(&metadata, limits.max_stopwords)?;
         let Some(query) = query::fulltext(
             &normalized,
             stem.as_ref(),
-            &|term| self.exists(term),
+            &|term| {
+                check_cancel(cancelled)?;
+                self.exists(term)
+            },
             &words,
         )?
         else {
-            return Ok(vec![]);
+            return Ok(Page::empty());
         };
-        let mut top = BTreeSet::<Rank>::new();
+        let mut top = BTreeSet::new();
         let mut best: Option<Match> = None;
-        let total = matcher::for_each_match(db, &query, matcher::FULLTEXT, |m| {
+        let mut matches = 0u64;
+        let leaves = matcher::for_each_match(db, &query, matcher::FULLTEXT, cancelled, |m| {
+            matches += 1;
+            if window == 0 {
+                return Ok(());
+            }
             if best.is_none_or(|b| m.weight > b.weight) {
                 best = Some(m);
             }
+            // Full-text rank doesn't use title. The tuple needs no per-match allocation.
             let rank = Rank {
                 weight: m.weight,
-                title: vec![],
+                title: (),
                 did: m.did,
             };
-            if top.len() < limit || top.last().is_some_and(|worst| rank < *worst) {
-                top.insert(rank);
-                if top.len() > limit {
+            if top.len() < window || top.last().is_some_and(|worst| rank < *worst) {
+                if top.len() == window {
                     top.pop_last();
                 }
+                if top.len() >= limits.max_ranked_hits {
+                    return Err(rank_limit(limits));
+                }
+                top.insert(rank);
             }
             Ok(())
         })?;
-        let Some(best) = best else {
-            return Ok(vec![]);
+        check_cancel(cancelled)?;
+        let mut page = Page {
+            hits: Vec::new(),
+            total: matches,
         };
+        let Some(best) = best else {
+            return Ok(page);
+        };
+        if offset >= top.len() {
+            return Ok(page);
+        }
         let slots = ValueSlots::read(db)?;
-        let mut hits = Vec::with_capacity(top.len());
-        for rank in top {
-            let word_count = slot_value(db, rank.did, slots.word_count)?
+        let mut output_bytes = 0;
+        for Rank { weight, did, .. } in top.into_iter().skip(offset) {
+            check_cancel(cancelled)?;
+            let path = self.document_path(did, limits.max_result_bytes - output_bytes)?;
+            charge_bytes(&mut output_bytes, path.len(), limits.max_result_bytes)?;
+            let word_count = slot_value(db, did, slots.word_count, cancelled)?
                 .and_then(|v| String::from_utf8(v).ok()?.parse().ok());
-            hits.push(Hit {
-                path: self.document_path(rank.did)?,
-                score: rank.weight,
-                percent: matcher::percent(rank.weight, &best, total),
-                word_count,
+            let snippet = if include_stored_snippets && let Some(slot) = slots.snippet {
+                let allowance = limits
+                    .max_result_field_bytes
+                    .min(limits.max_result_bytes - output_bytes);
+                let raw = db
+                    .value_limited(did, slot, allowance, cancelled)?
+                    .unwrap_or_default();
+                if slots.legacy && raw.is_empty() {
+                    None
+                } else {
+                    charge_bytes(&mut output_bytes, raw.len(), limits.max_result_bytes)?;
+                    Some(
+                        String::from_utf8(raw)
+                            .map_err(|_| Error::Format("invalid UTF-8 stored snippet".into()))?,
+                    )
+                }
+            } else {
+                None
+            };
+            page.hits.push(PageHit {
+                hit: Hit {
+                    path,
+                    score: weight,
+                    percent: matcher::percent(weight, &best, leaves),
+                    word_count,
+                },
+                snippet,
             });
         }
-        Ok(hits)
+        check_cancel(cancelled)?;
+        Ok(page)
     }
 
-    /// Title suggestions, as libzim makes them: document paths.
+    /// Title suggestions as original document paths, after alias collapse.
     pub fn suggest(&self, q: &str, limit: usize, lang: &str) -> Result<Vec<String>> {
-        if limit == 0 || q.is_empty() {
+        if limit == 0 {
             return Ok(vec![]);
+        }
+        Ok(self.suggest_page(q, 0, limit, lang, &|| false)?.hits)
+    }
+
+    /// Seek by ranked offset after collapse. Per-query retained title sort keys
+    /// and alias keys share a byte budget independent of the output page.
+    pub fn suggest_page(
+        &self,
+        q: &str,
+        offset: usize,
+        limit: usize,
+        lang: &str,
+        cancelled: &dyn Fn() -> bool,
+    ) -> Result<Page<String>> {
+        check_cancel(cancelled)?;
+        let window = page_window(offset, limit)?;
+        if q.is_empty() {
+            return Ok(Page::empty());
         }
         let normalized = self.normalize_query(q)?;
         let db = &self.db;
+        let limits = db.limits();
         let stem = self.stemmer(lang)?;
-        let Some(query) = query::suggestion(&normalized, stem.as_ref(), &|term| self.exists(term))?
+        let Some(query) = query::suggestion(&normalized, stem.as_ref(), &|term| {
+            check_cancel(cancelled)?;
+            self.exists(term)
+        })?
         else {
-            return Ok(vec![]);
+            return Ok(Page::empty());
         };
         let slots = ValueSlots::read(db)?;
-        // Retain the best representative of each target among the top K.
-        // An evicted target may re-enter later through a better-scoring alias.
-        let mut top = BTreeMap::<Rank, Vec<u8>>::new();
-        let mut retained_targets = HashMap::<Vec<u8>, Rank>::new();
-        matcher::for_each_match(db, &query, matcher::SUGGEST, |m| {
+        let mut top = BTreeMap::<Rank<Arc<[u8]>>, Arc<[u8]>>::new();
+        let mut retained_targets = HashMap::<Arc<[u8]>, Rank<Arc<[u8]>>>::new();
+        let mut key_bytes = 0;
+        let mut matches = 0u64;
+        matcher::for_each_match(db, &query, matcher::SUGGEST, cancelled, |m| {
+            matches += 1;
+            if window == 0 {
+                return Ok(());
+            }
             let worst = top.last_key_value().map(|(rank, _)| rank);
-            if top.len() == limit && worst.is_some_and(|w| m.weight < w.weight) {
+            if top.len() == window && worst.is_some_and(|w| m.weight < w.weight) {
                 return Ok(());
             }
             let rank = Rank {
                 weight: m.weight,
-                title: slot_value(db, m.did, slots.title)?.unwrap_or_default(),
+                title: slot_value(db, m.did, slots.title, cancelled)?
+                    .unwrap_or_default()
+                    .into(),
                 did: m.did,
             };
-            if top.len() == limit && worst.is_some_and(|w| rank >= *w) {
+            if top.len() == window && worst.is_some_and(|w| rank >= *w) {
                 return Ok(());
             }
-            let target = slot_value(db, m.did, slots.target)?.unwrap_or_default();
-            if retained_targets.get(&target).is_some_and(|r| rank >= *r) {
-                return Ok(());
-            }
-            if !target.is_empty()
-                && let Some(old) = retained_targets.insert(target.clone(), rank.clone())
+            let target: Arc<[u8]> = slot_value(db, m.did, slots.target, cancelled)?
+                .unwrap_or_default()
+                .into();
+            if let Some(old) = retained_targets.get(&target) {
+                if rank >= *old {
+                    return Ok(());
+                }
+                top.remove(old);
+                key_bytes -= old.title.len() + target.len();
+                retained_targets.remove(&target);
+            } else if top.len() == window
+                && let Some((old, key)) = top.pop_last()
             {
-                top.remove(&old);
-            }
-            top.insert(rank, target);
-            if top.len() > limit
-                && let Some((_, key)) = top.pop_last()
-            {
+                key_bytes -= old.title.len() + key.len();
                 retained_targets.remove(&key);
             }
+            if top.len() >= limits.max_ranked_hits {
+                return Err(rank_limit(limits));
+            }
+            charge_bytes(&mut key_bytes, rank.title.len(), limits.max_result_bytes)?;
+            charge_bytes(&mut key_bytes, target.len(), limits.max_result_bytes)?;
+            if !target.is_empty() {
+                retained_targets.insert(target.clone(), rank.clone());
+            }
+            top.insert(rank, target);
             Ok(())
         })?;
-        top.into_keys()
-            .map(|rank| self.document_path(rank.did))
-            .collect()
+        drop(retained_targets);
+        let mut page = Page {
+            hits: Vec::new(),
+            total: matches,
+        };
+        let mut output_bytes = 0;
+        for rank in top.into_keys().skip(offset) {
+            check_cancel(cancelled)?;
+            let path = self.document_path(rank.did, limits.max_result_bytes - output_bytes)?;
+            charge_bytes(&mut output_bytes, path.len(), limits.max_result_bytes)?;
+            page.hits.push(path);
+        }
+        check_cancel(cancelled)?;
+        Ok(page)
     }
 }
 
@@ -407,6 +607,40 @@ mod path_tests {
             legacy.suggest("prairie", 3, "").unwrap(),
             ["C/first", "C/second", "C/third"]
         );
+    }
+
+    #[test]
+    fn stored_snippets_respect_legacy_missing_and_declared_empty_slots() {
+        let index = |map: Option<&[u8]>, values: &[(u32, Vec<u8>)]| {
+            let mut builder = Builder::default();
+            if let Some(map) = map {
+                builder.set_metadata("valuesmap", map);
+            }
+            let terms = Terms::from([(b"prairie".to_vec(), (1, vec![]))]);
+            builder.add(b"C/field", &terms, values).unwrap();
+            let mut output = Cursor::new(Vec::new());
+            builder.write(&mut output, [0; 16]).unwrap();
+            Index::open(Box::new(output.into_inner())).unwrap()
+        };
+        for (index, expected) in [
+            (index(None, &[]), None),
+            (index(None, &[(1, b"old".to_vec())]), Some("old")),
+            (index(Some(b"snippet:7"), &[]), Some("")),
+            (
+                index(Some(b"snippet:7"), &[(7, b"named".to_vec())]),
+                Some("named"),
+            ),
+            (index(Some(b"other:1"), &[(1, b"ignored".to_vec())]), None),
+        ] {
+            let page = index
+                .search_page("prairie", 0, 1, "", true, &|| false)
+                .unwrap();
+            assert_eq!(page.hits[0].snippet.as_deref(), expected);
+            let page = index
+                .search_page("prairie", 0, 1, "", false, &|| false)
+                .unwrap();
+            assert_eq!(page.hits[0].snippet, None);
+        }
     }
 
     #[test]
@@ -542,56 +776,134 @@ impl IndexWriter {
     }
 }
 
-/// A plain-text extract of an article's HTML around the first words of `q`
-/// (about 200 characters).
-// ponytail: the first window holding a query word, not Xapian's snippet
-// algorithm (MSet::snippet); port that if matching Kiwix's snippets matters.
+/// Query terms shared by every generated excerpt on a search page.
+pub struct SnippetQuery {
+    short: HashSet<String>,
+    prefixes: Vec<String>,
+}
+
+impl SnippetQuery {
+    pub fn new(q: &str) -> Self {
+        let mut short = HashSet::new();
+        let mut prefixes = Vec::new();
+        parse_terms(&remove_accents(q), true, false, |term, _| {
+            if term.len() < 3 {
+                short.insert(term.to_owned());
+            } else {
+                prefixes.push(term.to_owned());
+            }
+            true
+        });
+        // If one term is a prefix of another it covers all of the latter's
+        // matches. Keeping the shorter term leaves disjoint prefixes in lexical order.
+        prefixes.sort_unstable();
+        prefixes.dedup_by(|next, prev| next.starts_with(prev.as_str()));
+        Self { short, prefixes }
+    }
+
+    fn matches(&self, word: &str) -> bool {
+        if word.len() < 3 {
+            return self.short.contains(word);
+        }
+        let end = self.prefixes.partition_point(|p| p.as_str() <= word);
+        end != 0 && word.starts_with(&self.prefixes[end - 1])
+    }
+
+    /// Extract up to 200 Unicode characters around the first matching word.
+    /// The caller sets the maximum article prefix to parse. Cancellation is
+    /// polled around parsing and while searching the resulting plain text.
+    pub fn excerpt(&self, html: &str, cancelled: &dyn Fn() -> bool) -> Result<String> {
+        const CHARS: usize = 200;
+        check_cancel(cancelled)?;
+        let text = html::parse(html).dump;
+        check_cancel(cancelled)?;
+        let mut start = text.split_whitespace();
+        let mut found = false;
+        if !self.short.is_empty() || !self.prefixes.is_empty() {
+            for (i, word) in text.split_whitespace().enumerate() {
+                if i.is_multiple_of(64) {
+                    check_cancel(cancelled)?;
+                }
+                let word = remove_accents(word.trim_matches(|c: char| !c.is_alphanumeric()));
+                if self.matches(&word) {
+                    found = true;
+                    break;
+                }
+                if i >= 4 {
+                    start.next();
+                }
+            }
+        }
+        if !found {
+            start = text.split_whitespace();
+        }
+        let mut chars = start
+            .flat_map(|word| std::iter::once(' ').chain(word.chars()))
+            .skip(1);
+        let mut s: String = chars.by_ref().take(CHARS).collect();
+        if chars.next().is_some() {
+            if let Some(cut) = s.rfind(' ') {
+                s.truncate(cut);
+            }
+            s.push('…');
+        }
+        check_cancel(cancelled)?;
+        Ok(s)
+    }
+}
+
+/// Plain-text extract for callers producing a single snippet.
 pub fn snippet(html: &str, q: &str) -> String {
-    const CHARS: usize = 200;
-    let text = html::parse(html).dump;
-    let mut words = vec![];
-    parse_terms(&remove_accents(q), true, false, |t, _| {
-        words.push(t.to_string());
-        true
-    });
-    // Follow the scan four words behind. Only the returned window needs
-    // allocation, even if the first matching word is near the end.
-    let mut start = text.split_whitespace();
-    let mut found = false;
-    if !words.is_empty() {
-        for (i, word) in text.split_whitespace().enumerate() {
-            let word = remove_accents(word.trim_matches(|c: char| !c.is_alphanumeric()));
-            if words
-                .iter()
-                .any(|q| q == &word || (q.len() >= 3 && word.starts_with(q)))
-            {
-                found = true;
-                break;
-            }
-            if i >= 4 {
-                start.next();
-            }
-        }
-    }
-    if !found {
-        start = text.split_whitespace();
-    }
-    let mut chars = start
-        .flat_map(|word| std::iter::once(' ').chain(word.chars()))
-        .skip(1);
-    let mut s: String = chars.by_ref().take(CHARS).collect();
-    if chars.next().is_some() {
-        if let Some(cut) = s.rfind(' ') {
-            s.truncate(cut);
-        }
-        s.push('…');
-    }
-    s
+    SnippetQuery::new(q)
+        .excerpt(html, &|| false)
+        .expect("uncancelled snippet")
 }
 
 #[cfg(test)]
 mod snippet_tests {
-    use super::snippet;
+    use super::{SnippetQuery, snippet};
+
+    #[test]
+    fn reusable_queries_preserve_short_and_overlapping_prefixes() {
+        let q = SnippetQuery::new("ab alps alpine alp café 東京");
+        assert!(q.matches("ab"));
+        assert!(!q.matches("about"));
+        for word in ["alpine", "alps", "alpaca", "cafeteria", "東京駅"] {
+            assert!(q.matches(word));
+        }
+        assert!(!q.matches("almanac"));
+        assert_eq!(
+            q.excerpt("0 1 2 3 4 5 Alpinist", &|| false).unwrap(),
+            "2 3 4 5 Alpinist"
+        );
+        assert_eq!(
+            q.excerpt("a b c d e f Café", &|| false).unwrap(),
+            "c d e f Café"
+        );
+    }
+
+    #[test]
+    fn broad_excerpt_can_cancel_mid_article_and_retry() {
+        let terms = (0..4096)
+            .map(|i| format!("keyword{i:04}"))
+            .collect::<Vec<_>>()
+            .join(" ");
+        let q = SnippetQuery::new(&terms);
+        assert_eq!(q.prefixes.len(), 4096);
+        let text = "ordinary ".repeat(1024) + "keyword4095suffix";
+        let polls = std::cell::Cell::new(0);
+        let error = q
+            .excerpt(&text, &|| {
+                polls.set(polls.get() + 1);
+                polls.get() == 5
+            })
+            .unwrap_err();
+        assert_eq!(error.to_string(), "Search cancelled");
+        assert_eq!(
+            q.excerpt(&text, &|| false).unwrap(),
+            "ordinary ordinary ordinary ordinary keyword4095suffix"
+        );
+    }
 
     #[test]
     fn keeps_four_preceding_words_and_truncates_on_a_character_boundary() {

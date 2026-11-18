@@ -21,6 +21,7 @@ const COMPRESSED: u8 = 0x80;
 const LAST: u8 = 0x40;
 const FIRST: u8 = 0x20;
 const CACHE_BLOCKS: usize = 256;
+const CACHE_BYTES: usize = 2 << 20;
 
 fn corrupt(what: &str) -> Error {
     Error::Format(format!("Xapian index: {what}"))
@@ -49,7 +50,7 @@ pub struct Blocks {
     pub size: usize,
     pub limits: ReaderLimits,
     revision: u32,
-    // ponytail: cleared when full, not LRU; make it an LRU if hit rates matter.
+    max_cached_blocks: usize,
     cache: Mutex<HashMap<u32, Block>>,
 }
 
@@ -60,6 +61,7 @@ impl Blocks {
             size,
             limits,
             revision,
+            max_cached_blocks: CACHE_BLOCKS.min(CACHE_BYTES / size),
             cache: Mutex::new(HashMap::new()),
         }
     }
@@ -76,7 +78,7 @@ impl Blocks {
         }
         let b: Block = v.into();
         let mut c = self.cache.lock().unwrap();
-        if c.len() >= CACHE_BLOCKS {
+        if c.len() >= self.max_cached_blocks {
             c.clear();
         }
         c.insert(n, b.clone());
@@ -434,6 +436,27 @@ mod tests {
     use crate::glass::write::{BLOCKSIZE, Builder};
     use flate2::{Compression, write::DeflateEncoder};
     use std::io::Write;
+
+    #[test]
+    fn block_cache_bounds_resident_payload_for_all_glass_block_sizes() {
+        struct EmptyLeaf;
+        impl Source for EmptyLeaf {
+            fn read_at(&self, buf: &mut [u8], _: u64) -> Result<()> {
+                buf[9..11].copy_from_slice(&(DIR_START as u16).to_be_bytes());
+                Ok(())
+            }
+        }
+        for size in [2048, 4096, 8192, 16384, 32768, 65536] {
+            let blocks = Blocks::new(Box::new(EmptyLeaf), size, Default::default(), 1);
+            let mut peak = 0;
+            for n in 0..=256 {
+                blocks.get(n).unwrap();
+                let cache = blocks.cache.lock().unwrap();
+                peak = peak.max(cache.values().map(|block| block.len()).sum::<usize>());
+            }
+            assert_eq!(peak, (256 * size).min(2 << 20));
+        }
+    }
 
     #[test]
     fn reads_older_root_and_leaf_revisions_across_a_split_tag() {

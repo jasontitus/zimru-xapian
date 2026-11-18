@@ -52,3 +52,17 @@ python3 tests/performance.py measure --runs 11 \
 ```
 
 The measurement command prints one JSON object per workload and binary with raw wall times, peak RSS samples, and a result digest or index size.
+
+## Cache size on 64 KiB Glass blocks
+
+On Apple Silicon macOS, the parent revision `d051622` cached 256 blocks of up to 64 KiB each. The revised cache retains at most 2 MiB of payload per open index. A regression measures retained block lengths at all six supported block sizes. Separate live cursors and decoder allocations can use additional memory.
+
+A native Xapian 1.4.32 database held one document and 4,096 metadata keys named `key0` through `key4095`. Each value contained the low bytes of 4,096 successive C++ `mt19937` outputs, seeded once with 123. Native compaction produced an 18,219,008-byte, 64 KiB-block single-file Glass database. A release Rust process read all keys in numeric order twice using file-backed positional reads. Its accumulated value bytes matched on both builds. Seven warm-cache process launches per build alternated order after one warm-up pair. Process RSS came from Darwin `wait4`.
+
+| Measurement | Parent revision | Bounded cache |
+| --- | ---: | ---: |
+| Median peak process RSS | 26.25 MiB | 6.20 MiB |
+| Median elapsed time including startup | 19.49 ms | 18.26 ms |
+| Source reads per run | 1,106 | 1,211 |
+
+These measurements cover repeated sequential metadata queries on this generated index. The smaller cache reads additional blocks after eviction.

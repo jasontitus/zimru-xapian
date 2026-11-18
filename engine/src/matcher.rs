@@ -50,6 +50,7 @@ pub struct Match {
 
 struct Ctx<'a> {
     db: &'a Db,
+    cancelled: &'a dyn Fn() -> bool,
     n: f64,
     len_factor: f64,
     bm: Bm25,
@@ -119,6 +120,7 @@ fn synonym_tf(tfs: Vec<u32>, n: f64) -> u32 {
 
 impl<'a> Node<'a> {
     fn build(q: &'a Query, ctx: &'a Ctx<'a>, remaining_terms: &mut usize) -> Result<Self> {
+        crate::check_cancel(ctx.cancelled)?;
         let term_limit = || {
             Error::Invalid(format!(
                 "expanded query exceeds the {} term limit",
@@ -148,20 +150,21 @@ impl<'a> Node<'a> {
             }
             Query::Wildcard(prefix, max) => {
                 let mut heap = BinaryHeap::new();
-                ctx.db.visit_terms(prefix.as_bytes(), |term, tf| {
-                    // At the root: lowest frequency, then largest lexical
-                    // term. Equal frequencies retain the first terms in the scan.
-                    if *max == 0 || heap.len() < *max {
-                        if heap.len() == *remaining_terms {
-                            return Err(term_limit());
+                ctx.db
+                    .visit_terms(prefix.as_bytes(), ctx.cancelled, |term, tf| {
+                        // At the root: lowest frequency, then largest lexical
+                        // term. Equal frequencies retain the first terms in the scan.
+                        if *max == 0 || heap.len() < *max {
+                            if heap.len() == *remaining_terms {
+                                return Err(term_limit());
+                            }
+                            heap.push((Reverse(tf), term));
+                        } else if heap.peek().is_some_and(|(Reverse(worst), _)| tf > *worst) {
+                            heap.pop();
+                            heap.push((Reverse(tf), term));
                         }
-                        heap.push((Reverse(tf), term));
-                    } else if heap.peek().is_some_and(|(Reverse(worst), _)| tf > *worst) {
-                        heap.pop();
-                        heap.push((Reverse(tf), term));
-                    }
-                    Ok(())
-                })?;
+                        Ok(())
+                    })?;
                 *remaining_terms -= heap.len();
                 let terms: Vec<_> = heap
                     .into_iter()
@@ -239,7 +242,7 @@ impl<'a> Node<'a> {
     }
 
     /// First matching docid at or after target.
-    fn seek(&mut self, target: u32, db: &Db) -> Result<Option<u32>> {
+    fn seek(&mut self, target: u32, ctx: &Ctx) -> Result<Option<u32>> {
         if self.did.is_none_or(|d| d >= target) {
             return Ok(self.did);
         }
@@ -248,7 +251,7 @@ impl<'a> Node<'a> {
             Branch::Leaf { postings, .. } => {
                 let mut first: Option<u32> = None;
                 for pl in postings {
-                    if pl.skip_to(target)? {
+                    if pl.skip_to_checked(target, ctx.cancelled)? {
                         first = Some(first.map_or(pl.did(), |d| d.min(pl.did())));
                     }
                 }
@@ -257,7 +260,7 @@ impl<'a> Node<'a> {
             Branch::Or(children) => {
                 let mut first: Option<u32> = None;
                 for child in children {
-                    if let Some(d) = child.seek(target, db)? {
+                    if let Some(d) = child.seek(target, ctx)? {
                         first = Some(first.map_or(d, |prev| prev.min(d)));
                     }
                 }
@@ -266,11 +269,12 @@ impl<'a> Node<'a> {
             Branch::And { children, phrase } => {
                 let mut candidate = target;
                 'intersect: loop {
+                    crate::check_cancel(ctx.cancelled)?;
                     if children.is_empty() {
                         break None;
                     }
                     for (i, child) in children.iter_mut().enumerate() {
-                        let Some(did) = child.seek(candidate, db)? else {
+                        let Some(did) = child.seek(candidate, ctx)? else {
                             break 'intersect None;
                         };
                         if did > candidate {
@@ -281,7 +285,7 @@ impl<'a> Node<'a> {
                         }
                     }
                     if let Some((terms, window)) = phrase
-                        && !phrase_at(db, terms, *window, candidate)?
+                        && !phrase_at(ctx, terms, *window, candidate)?
                     {
                         let Some(next) = candidate.checked_add(1) else {
                             break None;
@@ -295,10 +299,11 @@ impl<'a> Node<'a> {
             Branch::AndNot(left, right) => {
                 let mut candidate = target;
                 loop {
-                    let Some(did) = left.seek(candidate, db)? else {
+                    crate::check_cancel(ctx.cancelled)?;
+                    let Some(did) = left.seek(candidate, ctx)? else {
                         break None;
                     };
-                    if right.seek(did, db)? != Some(did) {
+                    if right.seek(did, ctx)? != Some(did) {
                         break Some(did);
                     }
                     let Some(next) = did.checked_add(1) else {
@@ -342,36 +347,47 @@ impl<'a> Node<'a> {
     }
 }
 
-fn phrase_at(db: &Db, terms: &[&str], window: u32, did: u32) -> Result<bool> {
+fn phrase_at(ctx: &Ctx, terms: &[&str], window: u32, did: u32) -> Result<bool> {
+    let db = ctx.db;
     let Some((first, rest)) = terms.split_first() else {
         return Ok(false);
     };
     // Keep only potential phrase starts and their earliest possible end.
     // Both are nondecreasing, so each subsequent position list needs one pass.
-    let mut spans: Vec<_> = db
-        .positions(did, first.as_bytes())?
-        .into_iter()
-        .map(|p| (p, p))
-        .collect();
+    let starts = db.positions_checked(did, first.as_bytes(), ctx.cancelled)?;
+    let mut spans = Vec::with_capacity(starts.len());
+    for (i, start) in starts.into_iter().enumerate() {
+        if i.is_multiple_of(256) {
+            crate::check_cancel(ctx.cancelled)?;
+        }
+        spans.push((start, start));
+    }
     for term in rest {
         if spans.is_empty() {
             return Ok(false);
         }
-        let positions = db.positions(did, term.as_bytes())?;
+        let positions = db.positions_checked(did, term.as_bytes(), ctx.cancelled)?;
         let mut ix = 0;
-        spans.retain_mut(|(start, end)| {
-            while ix < positions.len() && positions[ix] <= *end {
+        let mut kept = 0;
+        for i in 0..spans.len() {
+            if i.is_multiple_of(256) {
+                crate::check_cancel(ctx.cancelled)?;
+            }
+            let (start, end) = spans[i];
+            while ix < positions.len() && positions[ix] <= end {
+                if ix.is_multiple_of(256) {
+                    crate::check_cancel(ctx.cancelled)?;
+                }
                 ix += 1;
             }
             if let Some(&next) = positions.get(ix)
-                && next - *start < window
+                && next - start < window
             {
-                *end = next;
-                true
-            } else {
-                false
+                spans[kept] = (start, next);
+                kept += 1;
             }
-        });
+        }
+        spans.truncate(kept);
     }
     Ok(!spans.is_empty())
 }
@@ -382,6 +398,7 @@ pub fn for_each_match(
     db: &Db,
     q: &Query,
     bm: Bm25,
+    cancelled: &dyn Fn() -> bool,
     mut visit: impl FnMut(Match) -> Result<()>,
 ) -> Result<u32> {
     let n = f64::from(db.stats.doccount);
@@ -392,6 +409,7 @@ pub fn for_each_match(
     };
     let ctx = Ctx {
         db,
+        cancelled,
         n,
         len_factor: if avg > 0.0 { 1.0 / avg } else { 0.0 },
         bm,
@@ -399,14 +417,15 @@ pub fn for_each_match(
     };
     let mut remaining_terms = db.limits().max_query_terms;
     let mut node = Node::build(q, &ctx, &mut remaining_terms)?;
-    let Some(mut did) = node.seek(1, db)? else {
+    let Some(mut did) = node.seek(1, &ctx)? else {
         return Ok(node.subqs);
     };
     let mut lens = db
         .budgeted_postlist(b"", &ctx.posting_budget)?
         .ok_or_else(|| Error::Format(format!("missing Glass document lengths for docid {did}")))?;
     loop {
-        if !lens.skip_to(did)? || lens.did() != did {
+        crate::check_cancel(cancelled)?;
+        if !lens.skip_to_checked(did, cancelled)? || lens.did() != did {
             return Err(Error::Format(format!(
                 "missing Glass document length for docid {did}"
             )));
@@ -416,7 +435,7 @@ pub fn for_each_match(
         let Some(target) = did.checked_add(1) else {
             break;
         };
-        let Some(next) = node.seek(target, db)? else {
+        let Some(next) = node.seek(target, &ctx)? else {
             break;
         };
         did = next;

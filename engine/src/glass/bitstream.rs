@@ -113,17 +113,32 @@ impl Reader<'_> {
         Some(p)
     }
 
-    fn interpolative(&mut self, pos: &mut [u32], mut j: usize, k: usize) -> Option<()> {
+    fn interpolative(
+        &mut self,
+        pos: &mut [u32],
+        mut j: usize,
+        k: usize,
+        cancelled: &dyn Fn() -> bool,
+    ) -> Result<()> {
         while j + 1 < k {
             let mid = j + (k - j) / 2;
-            let range = u64::from(pos[k]).checked_sub(u64::from(pos[j]))?;
-            let outof = range.checked_sub((k - j) as u64)? + 1;
+            if mid.is_multiple_of(256) {
+                crate::check_cancel(cancelled)?;
+            }
+            let range = u64::from(pos[k])
+                .checked_sub(u64::from(pos[j]))
+                .ok_or_else(bad_positions)?;
+            let outof = range
+                .checked_sub((k - j) as u64)
+                .ok_or_else(bad_positions)?
+                + 1;
             let lowest = u64::from(pos[j]) + (mid - j) as u64;
-            pos[mid] = u32::try_from(lowest + self.decode(outof)?).ok()?;
-            self.interpolative(pos, j, mid)?;
+            pos[mid] = u32::try_from(lowest + self.decode(outof).ok_or_else(bad_positions)?)
+                .map_err(|_| bad_positions())?;
+            self.interpolative(pos, j, mid, cancelled)?;
             j = mid;
         }
-        Some(())
+        Ok(())
     }
 }
 
@@ -132,7 +147,17 @@ fn bad_positions() -> Error {
 }
 
 /// Decode a single term's positions within one document.
+#[cfg(test)]
 pub fn decode(data: &[u8], max_positions: usize) -> Result<Vec<u32>> {
+    decode_checked(data, max_positions, &|| false)
+}
+
+pub fn decode_checked(
+    data: &[u8],
+    max_positions: usize,
+    cancelled: &dyn Fn() -> bool,
+) -> Result<Vec<u32>> {
+    crate::check_cancel(cancelled)?;
     let mut p = data;
     let last = pack::uint(&mut p)
         .and_then(|v| u32::try_from(v).ok())
@@ -166,8 +191,7 @@ pub fn decode(data: &[u8], max_positions: usize) -> Result<Vec<u32>> {
     positions.resize(count, 0);
     positions[0] = first;
     positions[count - 1] = last;
-    r.interpolative(&mut positions, 0, count - 1)
-        .ok_or_else(bad_positions)?;
+    r.interpolative(&mut positions, 0, count - 1, cancelled)?;
     // Xapian BitReader::check_all_gone permits only zero padding in the
     // final partial byte of a position list.
     if r.idx != r.buf.len() || r.n > 7 || r.acc != 0 {
@@ -190,6 +214,17 @@ mod tests {
         assert!(matches!(decode(&single, 0), Err(Error::Invalid(_))));
     }
 
+    #[test]
+    fn one_long_position_list_can_be_cancelled_during_decode() {
+        let data = encode(&(1..=10000).collect::<Vec<u64>>());
+        let calls = std::cell::Cell::new(0);
+        let error = decode_checked(&data, 10000, &|| {
+            calls.set(calls.get() + 1);
+            calls.get() == 5
+        })
+        .unwrap_err();
+        assert_eq!(error.to_string(), "Search cancelled");
+    }
     #[test]
     fn round_trips() {
         assert_eq!(decode(&[0x04, 0x02], 2).unwrap(), vec![2, 4]); // from a real index

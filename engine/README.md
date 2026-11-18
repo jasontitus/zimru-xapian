@@ -23,6 +23,9 @@ The document insertion methods return a `Result` and validate the writer mode an
 
 The language argument picks the stemmer when an index doesn't record one.
 
+For interactive searches, `search_page(query, offset, limit, language, include_stored_snippets, &cancelled)` returns ranked hits, optional index-provided snippets and a full-text match count. `suggest_page(query, offset, limit, language, &cancelled)` returns original document paths and an estimated total that can include aliases. A zero limit retrieves the count. Both methods poll the cancellation callback during matching and enforce the configured ranking and string budgets. For article excerpts, construct `SnippetQuery::new(query)` once per page and call `excerpt(html, &cancelled)` on each article prefix.
+
+
 ## Compatibility with libzim
 
 Searches rank like libzim on Xapian 1.4: the same query parsing, term

@@ -199,8 +199,17 @@ impl Db {
     }
 
     /// The document's data: in libzim's indexes, its full path (`C/...`).
+    #[cfg(test)]
     pub fn data(&self, did: u32) -> Result<Option<Vec<u8>>> {
         self.get(DOCDATA, &docdata_key(did))
+    }
+
+    pub fn data_limited(&self, did: u32, limit: usize) -> Result<Option<Vec<u8>>> {
+        let key = docdata_key(did);
+        match Cursor::seek_le(&self.blocks, &self.roots[DOCDATA], &key)? {
+            Some(c) if c.key()? == Some(&key) => Ok(Some(c.tag_limited(limit)?)),
+            _ => Ok(None),
+        }
     }
 
     /// (term frequency, collection frequency); (0, 0) if absent.
@@ -237,7 +246,18 @@ impl Db {
     }
 
     /// Value `slot` of `did` (empty values aren't stored: `None`).
+    #[cfg(test)]
     pub fn value(&self, did: u32, slot: u32) -> Result<Option<Vec<u8>>> {
+        self.value_limited(did, slot, self.limits().max_result_field_bytes, &|| false)
+    }
+
+    pub fn value_limited(
+        &self,
+        did: u32,
+        slot: u32,
+        max: usize,
+        cancelled: &dyn Fn() -> bool,
+    ) -> Result<Option<Vec<u8>>> {
         let key = value_key(slot, Some(did));
         let Some(c) = Cursor::seek_le(&self.blocks, &self.roots[POSTLIST], &key)? else {
             return Ok(None);
@@ -253,9 +273,19 @@ impl Db {
         let tag = c.tag()?;
         let mut p = &tag[..];
         let mut v = pack::string(&mut p).ok_or_else(bad)?;
+        let mut steps = 0usize;
         while d < did && !p.is_empty() {
+            if steps.is_multiple_of(256) {
+                crate::check_cancel(cancelled)?;
+            }
+            steps += 1;
             d = add_delta(d + 1, pack::uint(&mut p).ok_or_else(bad)?)?;
             v = pack::string(&mut p).ok_or_else(bad)?;
+        }
+        if d == did && v.len() > max {
+            return Err(Error::Invalid(format!(
+                "search result field exceeds the {max}-byte limit"
+            )));
         }
         Ok((d == did).then(|| v.to_vec()))
     }
@@ -274,10 +304,20 @@ impl Db {
     }
 
     /// The positions of `term` in `did` (empty if none stored).
+    #[cfg(test)]
     pub fn positions(&self, did: u32, term: &[u8]) -> Result<Vec<u32>> {
+        self.positions_checked(did, term, &|| false)
+    }
+
+    pub fn positions_checked(
+        &self,
+        did: u32,
+        term: &[u8],
+        cancelled: &dyn Fn() -> bool,
+    ) -> Result<Vec<u32>> {
         match self.get(POSITION, &position_key(term, did))? {
             None => Ok(vec![]),
-            Some(t) => bitstream::decode(&t, self.blocks.limits.max_positions),
+            Some(t) => bitstream::decode_checked(&t, self.blocks.limits.max_positions, cancelled),
         }
     }
 
@@ -286,6 +326,7 @@ impl Db {
     pub fn visit_terms(
         &self,
         prefix: &[u8],
+        cancelled: &dyn Fn() -> bool,
         mut visit: impl FnMut(Vec<u8>, u32) -> Result<()>,
     ) -> Result<()> {
         let mut start = vec![];
@@ -296,6 +337,7 @@ impl Db {
         while let Some(k) = c.key()?
             && k.starts_with(&start)
         {
+            crate::check_cancel(cancelled)?;
             if let Some(t) = term_of(k) {
                 let tag = c.tag()?;
                 let tf = pack::uint(&mut &tag[..]).ok_or_else(bad)?;
@@ -311,7 +353,7 @@ impl Db {
     #[cfg(test)]
     pub fn terms(&self, prefix: &[u8]) -> Result<Vec<(Vec<u8>, u32)>> {
         let mut out = Vec::new();
-        self.visit_terms(prefix, |term, count| {
+        self.visit_terms(prefix, &|| false, |term, count| {
             out.push((term, count));
             Ok(())
         })?;
@@ -515,7 +557,12 @@ impl<'a> PostList<'a> {
     }
 
     /// Advance to the first posting with docid ≥ `target`. False at the end.
+    #[cfg(test)]
     pub fn skip_to(&mut self, target: u32) -> Result<bool> {
+        self.skip_to_checked(target, &|| false)
+    }
+
+    pub fn skip_to_checked(&mut self, target: u32, cancelled: &dyn Fn() -> bool) -> Result<bool> {
         if self.ended {
             return Ok(false);
         }
@@ -535,7 +582,12 @@ impl<'a> PostList<'a> {
                 return Ok(true);
             }
         }
+        let mut steps = 0u32;
         while self.did < target {
+            if steps.is_multiple_of(256) {
+                crate::check_cancel(cancelled)?;
+            }
+            steps = steps.wrapping_add(1);
             if !self.next()? {
                 return Ok(false);
             }
