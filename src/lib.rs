@@ -85,7 +85,7 @@ pub use archive::{
     PrefixIter, Summary, NS_ARTICLES_LEGACY, NS_CONTENT_NEW, NS_INDEX, NS_METADATA, NS_WELLKNOWN,
 };
 pub use cluster::{Cluster, ClusterReadLimits, Compression};
-pub use dirent::{ArticleEntry, Dirent, RedirectEntry};
+pub use dirent::{ArticleEntry, DirectoryRecord, Dirent, RedirectEntry};
 pub use error::{Error, Result};
 pub use header::Header;
 pub use mime::MimeList;

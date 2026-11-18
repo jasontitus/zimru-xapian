@@ -23,7 +23,7 @@ use memmap2::Mmap;
 use rayon::prelude::*;
 
 use crate::cluster::{Cluster, RawOffsets};
-use crate::dirent::{ArticleEntry, Dirent};
+use crate::dirent::{ArticleEntry, DirectoryRecord, Dirent};
 use crate::error::{Error, Result};
 use crate::header::{Header, NO_MAIN_PAGE};
 use crate::mime::MimeList;
@@ -504,6 +504,20 @@ impl Archive {
     /// path order).
     pub fn entry_by_url_index(&self, idx: u32) -> Result<Entry> {
         self.read_entry(idx, Access::Lookup)
+    }
+
+    /// Inspect a complete directory record, including deleted or link-target
+    /// markers in older archives. These markers have names but no item payload.
+    pub fn directory_record(&self, index: u32) -> Result<DirectoryRecord> {
+        let offset = self.url_pointer(index)?;
+        self.core
+            .storage
+            .parse(offset, |buf| Dirent::parse_record(buf, 0))
+    }
+
+    /// Inspect a directory record by its ordinal in the preferred title listing.
+    pub fn title_record(&self, index: u32) -> Result<DirectoryRecord> {
+        self.directory_record(self.title_order()?.id(self, index)?)
     }
 
     fn read_entry(&self, idx: u32, access: Access) -> Result<Entry> {
@@ -1608,7 +1622,12 @@ impl Archive {
             if off >= file_len {
                 return Ok(false);
             }
-            if self.dirent(off).is_err() {
+            if self
+                .core
+                .storage
+                .parse(off, |buf| Dirent::parse_record(buf, 0))
+                .is_err()
+            {
                 return Ok(false);
             }
         }
@@ -1715,8 +1734,7 @@ impl Archive {
         let n = self.core.header.entry_count;
         let mime_count = self.core.mimes.len();
         for i in 0..n {
-            let off = self.url_pointer(i)?;
-            if let Dirent::Article(a) = self.dirent(off)? {
+            if let DirectoryRecord::Entry(Dirent::Article(a)) = self.directory_record(i)? {
                 if (a.mimetype as usize) >= mime_count {
                     return Ok(false);
                 }

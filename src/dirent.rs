@@ -40,6 +40,47 @@ pub enum Dirent {
     Redirect(RedirectEntry),
 }
 
+/// An ordinal directory row, including obsolete records with no item data.
+#[derive(Debug, Clone)]
+pub enum DirectoryRecord {
+    Entry(Dirent),
+    Retired {
+        kind: u16,
+        namespace: u8,
+        url: String,
+        title: String,
+    },
+}
+
+impl DirectoryRecord {
+    pub fn namespace(&self) -> u8 {
+        match self {
+            Self::Entry(entry) => entry.namespace(),
+            Self::Retired { namespace, .. } => *namespace,
+        }
+    }
+
+    pub fn path(&self) -> &str {
+        match self {
+            Self::Entry(entry) => entry.url(),
+            Self::Retired { url, .. } => url,
+        }
+    }
+
+    pub fn title(&self) -> &str {
+        match self {
+            Self::Entry(entry) => entry.title(),
+            Self::Retired { url, title, .. } => {
+                if title.is_empty() {
+                    url
+                } else {
+                    title
+                }
+            }
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct ArticleEntry {
     pub mimetype: u16,
@@ -87,6 +128,17 @@ impl RedirectEntry {
 impl Dirent {
     /// Parse a dirent starting at `off` in the underlying buffer.
     pub fn parse(buf: &[u8], off: usize) -> Result<Self> {
+        match Self::parse_record(buf, off)? {
+            DirectoryRecord::Entry(record) => Ok(record),
+            DirectoryRecord::Retired { kind, .. } => Err(std::io::Error::new(
+                std::io::ErrorKind::Unsupported,
+                format!("unsupported legacy directory entry type {kind:#06x}"),
+            )
+            .into()),
+        }
+    }
+
+    pub(crate) fn parse_record(buf: &[u8], off: usize) -> Result<DirectoryRecord> {
         let mimetype = raw::u16_at(buf, off)?;
         let parameter_len = raw::u8_at(buf, off + 2)? as usize;
         let namespace = raw::u8_at(buf, off + 3)?;
@@ -99,27 +151,26 @@ impl Dirent {
         }
 
         match mimetype {
-            MIME_REDIRECT => Ok(Dirent::Redirect(RedirectEntry {
+            MIME_REDIRECT => Ok(DirectoryRecord::Entry(Dirent::Redirect(RedirectEntry {
                 namespace,
                 redirect_index: raw::u32_at(buf, off + 8)?,
                 url: url.to_owned(),
                 title: title.to_owned(),
-            })),
-            // These retired records have no cluster or blob fields. Reporting
-            // the unsupported type prevents a payload lookup using path bytes.
-            MIME_LINKTARGET | MIME_DELETED => Err(std::io::Error::new(
-                std::io::ErrorKind::Unsupported,
-                format!("unsupported legacy directory entry type {mimetype:#06x}"),
-            )
-            .into()),
-            _ => Ok(Dirent::Article(ArticleEntry {
+            }))),
+            MIME_LINKTARGET | MIME_DELETED => Ok(DirectoryRecord::Retired {
+                kind: mimetype,
+                namespace,
+                url: url.to_owned(),
+                title: title.to_owned(),
+            }),
+            _ => Ok(DirectoryRecord::Entry(Dirent::Article(ArticleEntry {
                 mimetype,
                 namespace,
                 cluster: raw::u32_at(buf, off + 8)?,
                 blob: raw::u32_at(buf, off + 12)?,
                 url: url.to_owned(),
                 title: title.to_owned(),
-            })),
+            }))),
         }
     }
 
@@ -282,6 +333,14 @@ mod tests {
             buf[..2].copy_from_slice(&kind.to_le_bytes());
             buf[3] = b'A';
             buf.extend_from_slice(b"old page\0Title\0");
+            let record = Dirent::parse_record(&buf, 0).unwrap();
+            assert_eq!(
+                (record.namespace(), record.path(), record.title()),
+                (b'A', "old page", "Title")
+            );
+            assert!(
+                matches!(record, DirectoryRecord::Retired { kind: actual, .. } if actual == kind)
+            );
             assert_eq!(Dirent::key_at(&buf, 0).unwrap(), (b'A', "old page"));
             assert_eq!(Dirent::title_key_at(&buf, 0).unwrap(), (b'A', "Title"));
             assert!(
