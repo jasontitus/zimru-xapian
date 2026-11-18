@@ -10,9 +10,10 @@
  * Bytes:   returned via pointer + length; not NUL-terminated. Lifetime tied
  *   to the parent handle.
  * Errors:  fallible functions take a `zimru_error_t** err` out-parameter.
- *   On success *err is left untouched. On failure the function returns NULL
- *   (or 0/false) AND sets *err to a heap-allocated error the caller frees
- *   with zimru_error_free.
+ *   On success *err is left untouched. A reported error is heap-allocated
+ *   and freed with zimru_error_free. Each function documents its return
+ *   value for ordinary negative results, empty output, or failure. Some
+ *   functions also return a sentinel for NULL inputs without setting *err.
  * Ownership: anything returned via `*_t*` is owned by the caller and must
  *   be freed with the matching `*_free` function.
  * Threads: live reader handles support concurrent reads. Serialize all
@@ -240,7 +241,7 @@ typedef struct zimru_direct_access_t {
 } zimru_direct_access_t;
 
 /**
- * Zero-allocation blob view: a borrowed `(data, size)` slice into the
+ * Pinned blob view: a borrowed `(data, size)` slice into the
  * item's decompressed cluster, plus an opaque pin handle that keeps
  * the underlying cluster alive even if the LRU cluster cache evicts
  * the entry. Designed for hot-path consumers (servers serving content
@@ -644,8 +645,8 @@ struct zimru_entry_t *zimru_archive_random_entry(const struct zimru_archive_t *a
  uintptr_t zimru_blob_size(const struct zimru_blob_t *b);
 
 /**
- * Allocate a new creator with default settings (Zstd level 3, 2 MiB
- * cluster target, time-and-pid-seeded UUID). Always succeeds.
+ * Allocate a creator using Zstd and a 2 MiB cluster target. Zstd defaults
+ * to level 19 when neither an explicit level nor `ZSTD_CLEVEL` is set.
  */
  struct zimru_creator_t *zimru_creator_new(void);
 
@@ -675,7 +676,7 @@ bool zimru_creator_set_compression(struct zimru_creator_t *c,
  * are algorithm-specific:
  *
  * * Zstd — `1..=22` (negative "fast" levels also accepted by libzstd).
- *   Default `3`.
+ *   Default `19` when `ZSTD_CLEVEL` is unset.
  * * Xz — `0..=9`. Default `3`.
  * * None — ignored.
  */
@@ -718,8 +719,7 @@ bool zimru_creator_set_main_path(struct zimru_creator_t *c,
  * `content_len` is copied — the caller retains ownership of the input
  * buffer. Empty payloads (`content_len == 0`) are permitted.
  *
- * Duplicate paths are not detected here; the duplicate surfaces as a
- * dirent-order failure at finalize time.
+ * A duplicate namespace/path returns false and sets the optional error.
  *
  * **Namespace-prefix shortcut.** A `path` of the form `"X/<rest>"`
  * (with non-empty `<rest>`) is routed to the `X` namespace with the
@@ -842,9 +842,9 @@ bool zimru_creator_write_to(struct zimru_creator_t *c,
  * `add_item` / `add_metadata` / `add_redirection` /
  * `add_illustration` call bin-packs the content into the in-flight
  * cluster and stream-encodes-and-writes to disk as the cluster
- * fills, dropping the source bytes immediately. Peak RSS is
- * bounded by `cluster_size_target × thread_count` plus the small
- * per-item dirent metadata, regardless of the total archive size.
+ * fills. Peak memory also depends on individual item size, the writer's
+ * queued work and per-entry metadata. This C API buffers chunked bodies
+ * until `zimru_creator_end_item`.
  *
  * Any work already added via the buffered path before this call
  * is drained into the stream here.
@@ -918,8 +918,8 @@ bool zimru_creator_begin_item(struct zimru_creator_t *c,
 
 /**
  * Append a chunk of body bytes to the in-flight chunked item.
- * Cheap — copies `len` bytes into the in-flight buffer. Empty
- * chunks (`len == 0`, `chunk` may be NULL) are no-ops.
+ * Copies `len` bytes into the in-flight buffer. An empty chunk
+ * (`len == 0`, `chunk` may be NULL) adds no bytes to an active item.
  *
  * Errors:
  *
@@ -1090,9 +1090,9 @@ bool zimru_item_read_at(const struct zimru_item_t *it,
  * Populate `out` with a borrowed view of the item's bytes plus a pin
  * handle that keeps them alive. Returns `false` with `*err` set on
  * any failure (cluster decode error, bad blob index, NULL inputs).
- * Avoids the per-call `Box::new(zimru_blob_t)` of
- * [`zimru_item_get_data`] — costs one `Arc::clone` (refcount bump,
- * no allocation) per call. The pin must be released exactly once
+ * Avoids the extra blob-handle allocation of [`zimru_item_get_data`].
+ * A cache miss still reads and materializes the cluster, including
+ * decompression for compressed items. The pin must be released exactly once
  * with [`zimru_blob_view_release`].
  * Initialize a new view to all zeros, release it before repopulating it,
  * and keep the sole owning instance. A struct copy does not acquire a pin.

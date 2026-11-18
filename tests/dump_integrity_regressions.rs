@@ -233,6 +233,60 @@ fn exception_final_symlink_is_replaced_not_followed() {
 
 #[cfg(unix)]
 #[test]
+fn ambiguous_dump_names_fail_before_creating_or_replacing_output() {
+    let work = Workspace::new();
+    let archive = work.path("input.zim");
+    let root = work.path("root");
+    for mut fixture in [
+        Fixture::new(&["a", "docs//page", "docs/page"], &[]),
+        Fixture::new(&["a", "docs/page"], &[("docs/./page", "a")]),
+        Fixture::new(&["a", "docs", "docs/page", "_exceptions/docs%2fpage"], &[]),
+        Fixture::new(
+            &["a", "docs", "_exceptions/docs%2fpage/sub"],
+            &[("docs/page", "a")],
+        ),
+        Fixture::new(&["a", "dump_errors.log"], &[]),
+        Fixture::new(&["a", "dump_errors.log/entry"], &[]),
+    ] {
+        fixture.save(&archive);
+        for symbolic in [false, true] {
+            let output = dump(&archive, &root, symbolic);
+            assert_eq!(output.status.code(), Some(2));
+            assert!(String::from_utf8_lossy(&output.stderr).contains("dump destination"));
+            assert!(!root.exists());
+        }
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn literal_exception_names_can_coexist_until_the_same_fallback_is_needed() {
+    let work = Workspace::new();
+    let archive = work.path("input.zim");
+    Fixture::new(&["a", "_exceptions/report"], &[("report", "a")]).save(&archive);
+    for symbolic in [false, true] {
+        let root = work.path(if symbolic { "symbolic" } else { "html" });
+        fs::create_dir_all(root.join("report")).unwrap();
+        fs::write(root.join("a"), b"previous").unwrap();
+        let failure = dump(&archive, &root, symbolic);
+        assert_eq!(failure.status.code(), Some(2));
+        assert!(String::from_utf8_lossy(&failure.stderr).contains("_exceptions/report"));
+        assert_eq!(fs::read(root.join("a")).unwrap(), b"previous");
+        assert!(!root.join("_exceptions").exists());
+
+        fs::remove_dir(root.join("report")).unwrap();
+        assert_success(&dump(&archive, &root, symbolic));
+        assert_eq!(fs::read(root.join("a")).unwrap(), b"payload:a");
+        assert_eq!(
+            fs::read(root.join("_exceptions/report")).unwrap(),
+            b"payload:_exceptions/report"
+        );
+        assert!(root.join("report").exists());
+    }
+}
+
+#[cfg(unix)]
+#[test]
 fn html_redirects_are_relative_to_nested_and_exception_destinations_and_escaped() {
     let work = Workspace::new();
     let archive = work.path("input.zim");

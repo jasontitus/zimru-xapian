@@ -11,9 +11,10 @@ header = """/*
  * Bytes:   returned via pointer + length; not NUL-terminated. Lifetime tied
  *   to the parent handle.
  * Errors:  fallible functions take a `zimru_error_t** err` out-parameter.
- *   On success *err is left untouched. On failure the function returns NULL
- *   (or 0/false) AND sets *err to a heap-allocated error the caller frees
- *   with zimru_error_free.
+ *   On success *err is left untouched. A reported error is heap-allocated
+ *   and freed with zimru_error_free. Each function documents its return
+ *   value for ordinary negative results, empty output, or failure. Some
+ *   functions also return a sentinel for NULL inputs without setting *err.
  * Ownership: anything returned via `*_t*` is owned by the caller and must
  *   be freed with the matching `*_free` function.
  * Threads: live reader handles support concurrent reads. Serialize all

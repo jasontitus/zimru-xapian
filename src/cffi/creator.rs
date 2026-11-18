@@ -98,8 +98,8 @@ unsafe fn ptr_to_vec(data: *const u8, len: usize, err: *mut *mut zimru_error_t) 
     Some(std::slice::from_raw_parts(data, len).to_vec())
 }
 
-/// Allocate a new creator with default settings (Zstd level 3, 2 MiB
-/// cluster target, time-and-pid-seeded UUID). Always succeeds.
+/// Allocate a creator using Zstd and a 2 MiB cluster target. Zstd defaults
+/// to level 19 when neither an explicit level nor `ZSTD_CLEVEL` is set.
 #[no_mangle]
 pub unsafe extern "C" fn zimru_creator_new() -> *mut zimru_creator_t {
     Box::into_raw(Box::new(zimru_creator_t {
@@ -151,7 +151,7 @@ pub unsafe extern "C" fn zimru_creator_set_compression(
 /// are algorithm-specific:
 ///
 /// * Zstd — `1..=22` (negative "fast" levels also accepted by libzstd).
-///   Default `3`.
+///   Default `19` when `ZSTD_CLEVEL` is unset.
 /// * Xz — `0..=9`. Default `3`.
 /// * None — ignored.
 #[no_mangle]
@@ -234,8 +234,7 @@ pub unsafe extern "C" fn zimru_creator_set_main_path(
 /// `content_len` is copied — the caller retains ownership of the input
 /// buffer. Empty payloads (`content_len == 0`) are permitted.
 ///
-/// Duplicate paths are not detected here; the duplicate surfaces as a
-/// dirent-order failure at finalize time.
+/// A duplicate namespace/path returns false and sets the optional error.
 ///
 /// **Namespace-prefix shortcut.** A `path` of the form `"X/<rest>"`
 /// (with non-empty `<rest>`) is routed to the `X` namespace with the
@@ -282,9 +281,8 @@ pub unsafe extern "C" fn zimru_creator_add_item(
         Item::new(path_str, title_str, mime_str, bytes)
     };
     // try_add_item, not add_item: in streaming mode this does real work and
-    // can fail, and add_item reports failure by panicking — which across an
-    // `extern "C"` boundary is undefined behaviour rather than an error the
-    // caller can see. Map it onto the documented `false` + `*err` contract.
+    // can fail. A panic reaching this extern "C" boundary would abort the
+    // process. Map the fallible operation onto the documented error contract.
     if let Err(e) = (*inner).try_add_item(item) {
         set_err(err, e);
         return false;
@@ -495,9 +493,9 @@ pub unsafe extern "C" fn zimru_creator_write_to(
 /// `add_item` / `add_metadata` / `add_redirection` /
 /// `add_illustration` call bin-packs the content into the in-flight
 /// cluster and stream-encodes-and-writes to disk as the cluster
-/// fills, dropping the source bytes immediately. Peak RSS is
-/// bounded by `cluster_size_target × thread_count` plus the small
-/// per-item dirent metadata, regardless of the total archive size.
+/// fills. Peak memory also depends on individual item size, the writer's
+/// queued work and per-entry metadata. This C API buffers chunked bodies
+/// until `zimru_creator_end_item`.
 ///
 /// Any work already added via the buffered path before this call
 /// is drained into the stream here.
@@ -661,8 +659,8 @@ pub unsafe extern "C" fn zimru_creator_begin_item(
 }
 
 /// Append a chunk of body bytes to the in-flight chunked item.
-/// Cheap — copies `len` bytes into the in-flight buffer. Empty
-/// chunks (`len == 0`, `chunk` may be NULL) are no-ops.
+/// Copies `len` bytes into the in-flight buffer. An empty chunk
+/// (`len == 0`, `chunk` may be NULL) adds no bytes to an active item.
 ///
 /// Errors:
 ///
@@ -675,10 +673,7 @@ pub unsafe extern "C" fn zimru_creator_item_chunk(
     len: usize,
     err: *mut *mut zimru_error_t,
 ) -> bool {
-    if len == 0 {
-        return true;
-    }
-    if chunk.is_null() {
+    if len != 0 && chunk.is_null() {
         set_err(err, crate::Error::EntryNotFound);
         return false;
     }
@@ -697,7 +692,11 @@ pub unsafe extern "C" fn zimru_creator_item_chunk(
         return false;
     }
     let creator: &mut Creator = &mut *inner;
-    let slice = std::slice::from_raw_parts(chunk, len);
+    let slice = if len == 0 {
+        &[]
+    } else {
+        std::slice::from_raw_parts(chunk, len)
+    };
     match creator.chunked_item_chunk(slice) {
         Ok(()) => true,
         Err(e) => {

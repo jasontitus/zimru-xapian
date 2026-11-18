@@ -180,7 +180,7 @@ pub unsafe extern "C" fn zimru_item_get_data(
     }
 }
 
-/// Zero-allocation blob view: a borrowed `(data, size)` slice into the
+/// Pinned blob view: a borrowed `(data, size)` slice into the
 /// item's decompressed cluster, plus an opaque pin handle that keeps
 /// the underlying cluster alive even if the LRU cluster cache evicts
 /// the entry. Designed for hot-path consumers (servers serving content
@@ -222,9 +222,9 @@ pub unsafe extern "C" fn zimru_item_read_at(
 /// Populate `out` with a borrowed view of the item's bytes plus a pin
 /// handle that keeps them alive. Returns `false` with `*err` set on
 /// any failure (cluster decode error, bad blob index, NULL inputs).
-/// Avoids the per-call `Box::new(zimru_blob_t)` of
-/// [`zimru_item_get_data`] — costs one `Arc::clone` (refcount bump,
-/// no allocation) per call. The pin must be released exactly once
+/// Avoids the extra blob-handle allocation of [`zimru_item_get_data`].
+/// A cache miss still reads and materializes the cluster, including
+/// decompression for compressed items. The pin must be released exactly once
 /// with [`zimru_blob_view_release`].
 /// Initialize a new view to all zeros, release it before repopulating it,
 /// and keep the sole owning instance. A struct copy does not acquire a pin.

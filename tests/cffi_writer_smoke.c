@@ -71,11 +71,17 @@ static int streaming_contracts(const char *out_path, uint8_t compression) {
 
     if (!zimru_creator_start_writing(c, out_path, &err))
         DIE("start after premature finish: %s", zimru_error_message(err));
+    if (zimru_creator_item_chunk(c, NULL, 0, &err) || !err)
+        DIE("empty chunk with no item in flight did not report an error");
+    zimru_error_free(err);
+    err = NULL;
     /* Exactly the streaming-encode threshold: previously this hint
      * committed to a 256 MiB body and rejected the valid one-byte body. */
     if (!zimru_creator_begin_item(c, 0, "hinted", "Hinted", "text/plain",
                                   (size_t)256 * 1024 * 1024, &err))
         DIE("begin hinted: %s", zimru_error_message(err));
+    if (!zimru_creator_item_chunk(c, NULL, 0, &err) || err)
+        DIE("empty chunk on active item failed");
     if (!zimru_creator_item_chunk(c, (const uint8_t *)"x", 1, &err))
         DIE("hinted chunk: %s", zimru_error_message(err));
     if (!zimru_creator_end_item(c, &err))

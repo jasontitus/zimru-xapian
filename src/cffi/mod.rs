@@ -21,10 +21,10 @@
 //! * **Bytes** — returned via pointer + length; not NUL-terminated.
 //!   Lifetime is tied to the parent handle.
 //! * **Errors** — every fallible function takes a `*mut *mut zimru_error_t`
-//!   out-parameter. On success the out-parameter is left untouched. On
-//!   failure the function returns NULL / 0 / false *and* writes a
-//!   heap-allocated error pointer; the caller frees it with
-//!   [`zimru_error_free`].
+//!   out-parameter. On success the out-parameter is left untouched. A
+//!   reported error is heap-allocated and freed with [`zimru_error_free`].
+//!   See each function for the meaning of NULL, zero or false. Some
+//!   functions return a sentinel for NULL inputs without setting an error.
 //! * **Ownership** — anything returned through an `*mut zimru_*_t` pointer
 //!   is owned by the caller and must be freed with the matching
 //!   `zimru_*_free` function.

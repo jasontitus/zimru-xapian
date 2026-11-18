@@ -18,9 +18,9 @@
 //! per-item table (`--by-item`) showing where storage is going inside the
 //! archive: compressed cluster size, decompressed payload, and ratio.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io::{self, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use zimru::{Archive, Dirent, Entry, Error, NS_ARTICLES_LEGACY};
@@ -483,7 +483,6 @@ fn cmd_dump(args: &[String]) -> Result<ExitCode, Error> {
         .dir
         .clone()
         .ok_or_else(|| io_err("dump requires --dir=DIR"))?;
-    let root = DumpRoot::open(&dir)?;
     // Like `list`/`info`, dump only the content namespace by default on
     // modern archives (matches upstream zimdump 3.8.0, verified black-box);
     // otherwise `M/Title` and `C/Title` would flatten onto one path.
@@ -497,9 +496,40 @@ fn cmd_dump(args: &[String]) -> Result<ExitCode, Error> {
     // entry `Foo` (a file) can coexist with `Foo/bar` (which needs
     // `Foo` to be a directory). Upstream zimdump resolves these by
     // writing the colliding entry to `DIR/_exceptions/` with the
-    // path percent-escaped; we match that behaviour (and never
-    // abort the dump over a single entry).
+    // path percent-escaped. Plan those destinations before publishing.
     let exceptions_dir = PathBuf::from("_exceptions");
+    // Pass 1 — dirents only, no cluster decompression: partition into
+    // articles keyed by (cluster, blob) and redirects with their
+    // resolved target paths.
+    let mut articles: Vec<(u32, u32, String)> = Vec::new();
+    let mut redirects: Vec<(String, String)> = Vec::new();
+    for entry in arc.iter_by_path() {
+        let e = entry?;
+        if let Some(ns) = target_ns {
+            if e.namespace() != ns {
+                continue;
+            }
+        }
+        match e.dirent() {
+            Dirent::Article(a) => articles.push((a.cluster, a.blob, safe_path(e.path()))),
+            Dirent::Redirect(_) => {
+                let target = e.get_redirect_entry()?;
+                redirects.push((safe_path(e.path()), safe_path(target.path())));
+            }
+        }
+    }
+
+    let paths = articles
+        .iter()
+        .map(|(_, _, r)| r.as_str())
+        .chain(redirects.iter().map(|(r, _)| r.as_str()));
+    let mut plan = plan_dump(paths, &dir, &exceptions_dir)?;
+    let exiled_redirects = plan.exiled.split_off(articles.len());
+    let exiled_articles = plan.exiled;
+    let root = match plan.root {
+        Some(existing) => existing,
+        None => DumpRoot::open(&dir, plan.temp_namespace, true)?,
+    };
     let errors = AtomicUsize::new(0);
     let errlog: Mutex<Vec<String>> = Mutex::new(Vec::new());
     let fallback_paths: Mutex<HashMap<String, String>> = Mutex::new(HashMap::new());
@@ -536,7 +566,7 @@ fn cmd_dump(args: &[String]) -> Result<ExitCode, Error> {
             }
             match attempt(&dest) {
                 Ok(()) => {}
-                Err(err) if is_collision(&err) => {
+                Err(err) if !plan.fixed_fallbacks && is_collision(&err) => {
                     let exc = exception_dest(&exceptions_dir, rel);
                     match attempt(&exc).map(|()| exc) {
                         Ok(exc) => record_fallback(rel, &exc),
@@ -547,57 +577,6 @@ fn cmd_dump(args: &[String]) -> Result<ExitCode, Error> {
             }
         };
 
-    // Pass 1 — dirents only, no cluster decompression: partition into
-    // articles keyed by (cluster, blob) and redirects with their
-    // resolved target paths.
-    let mut articles: Vec<(u32, u32, String)> = Vec::new();
-    let mut redirects: Vec<(String, String)> = Vec::new();
-    for entry in arc.iter_by_path() {
-        let e = entry?;
-        if let Some(ns) = target_ns {
-            if e.namespace() != ns {
-                continue;
-            }
-        }
-        match e.dirent() {
-            Dirent::Article(a) => articles.push((a.cluster, a.blob, safe_path(e.path()))),
-            Dirent::Redirect(_) => {
-                let target = e.get_redirect_entry()?;
-                redirects.push((safe_path(e.path()), safe_path(target.path())));
-            }
-        }
-    }
-
-    // Collision policy, decided up front so it's deterministic and
-    // independent of the parallel write order below: when an entry
-    // path is also a directory prefix of deeper entries (file `Foo`
-    // vs `Foo/bar`), the SHALLOW entry keeps its natural path and
-    // the nested entries are exiled to `_exceptions/`. Article links
-    // target `./Foo`, so letting the directory win (whichever write
-    // lost the race) used to dangle every link to the entry — on the
-    // Bashkir Wikipedia that was 243 articles linking to one exiled
-    // page.
-    let (exiled_articles, exiled_redirects) = {
-        let all_paths: std::collections::HashSet<&str> = articles
-            .iter()
-            .map(|(_, _, r)| r.as_str())
-            .chain(redirects.iter().map(|(r, _)| r.as_str()))
-            .collect();
-        let is_exiled = |rel: &str| -> bool {
-            let mut idx = 0;
-            while let Some(pos) = rel[idx..].find('/') {
-                idx += pos;
-                if all_paths.contains(&rel[..idx]) {
-                    return true;
-                }
-                idx += 1;
-            }
-            false
-        };
-        let a: Vec<bool> = articles.iter().map(|(_, _, r)| is_exiled(r)).collect();
-        let r: Vec<bool> = redirects.iter().map(|(r, _)| is_exiled(r)).collect();
-        (a, r)
-    };
     // Redirects can refer forward to another redirect. Record statically
     // known relocations before emitting any links, then record runtime
     // article fallbacks as they are written.
@@ -687,13 +666,110 @@ fn cmd_dump(args: &[String]) -> Result<ExitCode, Error> {
     }
 }
 
+struct DumpPlan {
+    exiled: Vec<bool>,
+    fixed_fallbacks: bool,
+    temp_namespace: usize,
+    root: Option<DumpRoot>,
+}
+
+fn plan_dump<'a>(
+    paths: impl Iterator<Item = &'a str> + Clone,
+    dir: &Path,
+    exceptions: &Path,
+) -> Result<DumpPlan, Error> {
+    let mut natural = HashSet::new();
+    let mut fixed_fallbacks = false;
+    let mut temp_namespaces = HashSet::new();
+    let temp_prefix = format!(".zimdump-{}-", std::process::id());
+    for rel in paths.clone() {
+        if !natural.insert(rel) {
+            return Err(io_err(&format!("ambiguous dump destination: {rel}")));
+        }
+        let path = Path::new(rel);
+        if path.starts_with("dump_errors.log") {
+            return Err(io_err(&format!(
+                "dump destination conflicts with dump_errors.log: {rel}"
+            )));
+        }
+        fixed_fallbacks |= path.starts_with(exceptions);
+        for component in rel.split('/') {
+            if let Some((namespace, _)) = component
+                .strip_prefix(&temp_prefix)
+                .and_then(|s| s.split_once('-'))
+            {
+                if let Ok(n) = namespace.parse::<usize>() {
+                    temp_namespaces.insert(n);
+                }
+            }
+        }
+    }
+    // No archive entry or required directory can share a publication temp
+    // name. Unrelated pre-existing temp names are handled by O_EXCL.
+    let temp_namespace = (0..).find(|n| !temp_namespaces.contains(n)).unwrap();
+    let root = match DumpRoot::open(dir, temp_namespace, false) {
+        Ok(root) => Some(root),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => None,
+        Err(error) => return Err(error.into()),
+    };
+    let mut exiled = Vec::new();
+    let mut destinations = HashSet::new();
+    for rel in paths {
+        // A shallow file keeps its name; nested archive entries are exiled.
+        let path = Path::new(rel);
+        let mut fallback = path
+            .ancestors()
+            .skip(1)
+            .any(|parent| parent.to_str().is_some_and(|p| natural.contains(p)));
+        // Literal entries in the exception namespace can coincide with the
+        // actual fallback for a pre-existing filesystem conflict. Determine
+        // these routes read-only and freeze them before publication.
+        if fixed_fallbacks && !fallback {
+            if let Some(root) = &root {
+                fallback = root.needs_fallback(path)?;
+            }
+        }
+        if fixed_fallbacks {
+            let dest = if fallback {
+                exception_dest(exceptions, rel)
+            } else {
+                path.to_owned()
+            };
+            if let Some(dest) = destinations.replace(dest) {
+                return Err(io_err(&format!(
+                    "ambiguous dump destination: {}",
+                    dest.display()
+                )));
+            }
+        }
+        exiled.push(fallback);
+    }
+    let conflicting_parent = destinations
+        .iter()
+        .flat_map(|dest| dest.ancestors().skip(1))
+        .filter(|parent| destinations.contains(*parent))
+        .min();
+    if let Some(parent) = conflicting_parent {
+        return Err(io_err(&format!(
+            "ambiguous dump destination: {} is both a file and a directory",
+            parent.display()
+        )));
+    }
+    Ok(DumpPlan {
+        exiled,
+        fixed_fallbacks,
+        temp_namespace,
+        root,
+    })
+}
+
 /// A directory capability: all archive-controlled traversal uses `openat`
 /// with `O_NOFOLLOW`, and publication replaces directory entries atomically.
 /// Keeping directory descriptors open avoids check-then-follow races when
 /// a parent path is replaced with a symlink. Replacing (rather than
 /// truncating) final files also leaves external hard-link targets intact.
 #[cfg(unix)]
-struct DumpRoot(std::os::fd::OwnedFd);
+struct DumpRoot(std::os::fd::OwnedFd, usize);
 
 #[cfg(unix)]
 impl DumpRoot {
@@ -702,21 +778,23 @@ impl DumpRoot {
         .union(rustix::fs::OFlags::NOFOLLOW)
         .union(rustix::fs::OFlags::CLOEXEC);
 
-    fn open(path: &std::path::Path) -> io::Result<Self> {
+    fn open(path: &Path, temp_namespace: usize, create: bool) -> io::Result<Self> {
         // The caller may select a symlinked root. Resolve it once, then walk
         // every archive-controlled component relative to this descriptor.
-        std::fs::create_dir_all(path)?;
+        if create {
+            std::fs::create_dir_all(path)?;
+        }
         let path = std::fs::canonicalize(path)?;
-        Ok(Self(rustix::fs::open(
-            path,
-            Self::DIR_FLAGS,
-            rustix::fs::Mode::empty(),
-        )?))
+        Ok(Self(
+            rustix::fs::open(path, Self::DIR_FLAGS, rustix::fs::Mode::empty())?,
+            temp_namespace,
+        ))
     }
 
     fn parent<'a>(
         &self,
-        path: &'a std::path::Path,
+        path: &'a Path,
+        create: bool,
     ) -> io::Result<(std::os::fd::OwnedFd, &'a std::ffi::OsStr)> {
         use rustix::fs::{mkdirat, openat, Mode};
         use rustix::io::Errno;
@@ -737,7 +815,7 @@ impl DumpRoot {
             let open = || openat(&dir, name, Self::DIR_FLAGS, Mode::empty());
             dir = match open() {
                 Ok(next) => next,
-                Err(Errno::NOENT) => {
+                Err(Errno::NOENT) if create => {
                     match mkdirat(&dir, name, Mode::from_raw_mode(0o777)) {
                         Ok(()) | Err(Errno::EXIST) => {}
                         Err(error) => return Err(error.into()),
@@ -755,6 +833,21 @@ impl DumpRoot {
         ))
     }
 
+    fn needs_fallback(&self, path: &Path) -> io::Result<bool> {
+        use rustix::fs::{statat, AtFlags, FileType};
+        let (parent, name) = match self.parent(path, false) {
+            Ok(parent) => parent,
+            Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(false),
+            Err(e) if is_collision(&e) => return Ok(true),
+            Err(e) => return Err(e),
+        };
+        match statat(&parent, name, AtFlags::SYMLINK_NOFOLLOW) {
+            Ok(stat) => Ok(FileType::from_raw_mode(stat.st_mode) == FileType::Directory),
+            Err(rustix::io::Errno::NOENT) => Ok(false),
+            Err(e) => Err(e.into()),
+        }
+    }
+
     fn publish(
         &self,
         path: &std::path::Path,
@@ -764,11 +857,12 @@ impl DumpRoot {
         use std::sync::atomic::{AtomicU64, Ordering};
 
         static NEXT: AtomicU64 = AtomicU64::new(0);
-        let (parent, name) = self.parent(path)?;
+        let (parent, name) = self.parent(path, true)?;
         loop {
             let temp = format!(
-                ".zimdump-{}-{}",
+                ".zimdump-{}-{}-{}",
                 std::process::id(),
+                self.1,
                 NEXT.fetch_add(1, Ordering::Relaxed)
             );
             match create(&parent, &temp) {
@@ -817,7 +911,11 @@ struct DumpRoot;
 
 #[cfg(not(unix))]
 impl DumpRoot {
-    fn open(_: &std::path::Path) -> io::Result<Self> {
+    fn needs_fallback(&self, _: &Path) -> io::Result<bool> {
+        Err(io::ErrorKind::Unsupported.into())
+    }
+
+    fn open(_: &Path, _: usize, _: bool) -> io::Result<Self> {
         Err(io::Error::new(
             io::ErrorKind::Unsupported,
             "root-confined extraction is not supported on this platform",
