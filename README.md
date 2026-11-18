@@ -4,16 +4,16 @@ Two standalone GPL-3.0-or-later command-line tools for ZIM search indexes. `zims
 
 ## Build and search
 
-This review branch builds against the adjacent MIT `zimru` source tree at `849aa41605065a82e5b0dd998d741f0f8c213efe`. Clone the two branches of the private repository into sibling directories. The MIT branch retains its own history and license. Use a current stable Rust toolchain, a C toolchain and liblzma development files.
+This review branch builds against the adjacent MIT `zimru` source tree at `1b07bd682638694fc2a8d3152e507e351941b5e8`. Clone the two branches of the private repository into sibling directories. The MIT branch retains its own history and license. Build with a current stable Rust toolchain and a system linker. The native interoperability tests also use a C/C++ toolchain and liblzma development files.
 
 ```sh
 git clone -b review/zimru-memory-safety https://github.com/jasontitus/zimru-xapian.git zimru
-git -C zimru checkout --detach 849aa41605065a82e5b0dd998d741f0f8c213efe
+git -C zimru checkout --detach 1b07bd682638694fc2a8d3152e507e351941b5e8
 git clone -b review/zimru-storage https://github.com/jasontitus/zimru-xapian.git zimru-xapian
 cd zimru-xapian
 ```
 
-Ordinary archive and Glass reads use positioned I/O on a single original source file. Compressed fallback language metadata uses the MIT reader's guarded interface. Native Zstd and liblzma are still present through that library. [Adversarial findings and performance measurements](https://github.com/jasontitus/zimru-xapian/blob/849aa41605065a82e5b0dd998d741f0f8c213efe/docs/positioned-reader-review.md) · [Memory-safety review](https://github.com/jasontitus/zimru-xapian/blob/849aa41605065a82e5b0dd998d741f0f8c213efe/docs/memory-safety-review.md)
+Ordinary archive and Glass reads use positioned I/O on a single original source file. Compressed fallback language metadata uses the MIT reader's guarded interface. The archive library uses Rust codecs for Zstandard and XZ. The Glass reader inflates DEFLATE tags with miniz_oxide. [Codec review and session handoff](https://github.com/jasontitus/zimru-xapian/blob/1b07bd682638694fc2a8d3152e507e351941b5e8/docs/rust-codecs.md) [Adversarial findings and performance measurements](https://github.com/jasontitus/zimru-xapian/blob/1b07bd682638694fc2a8d3152e507e351941b5e8/docs/positioned-reader-review.md) · [Memory-safety review](https://github.com/jasontitus/zimru-xapian/blob/1b07bd682638694fc2a8d3152e507e351941b5e8/docs/memory-safety-review.md)
 
 ```sh
 cargo build --release --locked

@@ -8,4 +8,4 @@ The bundled default stopword lists come from `jasontitus/xapianbuilder` at `13ff
 
 The original standalone release pinned the MIT-licensed `jasontitus/zimru` dependency at `061afbc2920c78fc4ecb7211cb9ef4f3655dba35`. The archive library and the native reference builder are maintained independently. Cargo.lock records the resolved Rust dependency versions. [zimru MIT license](https://github.com/jasontitus/zimru/blob/061afbc2920c78fc4ecb7211cb9ef4f3655dba35/LICENSE)
 
-The positioned-I/O review uses the sibling MIT checkout at `849aa41605065a82e5b0dd998d741f0f8c213efe`. Its code changes descend from the original pinned revision above. Both Cargo manifests use local paths so a reviewer can test changes to either checkout together. See the build instructions in [README.md](README.md).
+The positioned-I/O and Rust codec reviews use the sibling MIT checkout at `1b07bd682638694fc2a8d3152e507e351941b5e8`. Its code changes descend from the original pinned revision above. Both Cargo manifests use local paths so a reviewer can test changes to either checkout together. See the build instructions in [README.md](README.md).

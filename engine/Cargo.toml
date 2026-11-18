@@ -11,11 +11,12 @@ categories = ["parser-implementations", "text-processing"]
 include = ["/src/**", "/tests/**", "/data/stopwords/**", "/LICENSES/**", "/README.md", "/LICENSE"]
 
 [dependencies]
-flate2 = "1.1.11"
+miniz_oxide = { version = "=0.9.1", default-features = false, features = ["with-alloc"] }
 icu_normalizer = "2.4.0"
 icu_properties = "2.4.0"
 rust-stemmers = "1.2.0"
 
 [dev-dependencies]
+flate2 = "1.1.11"
 zimru = { path = "../../zimru", default-features = false }
 tempfile = "3"

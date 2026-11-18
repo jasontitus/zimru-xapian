@@ -11,7 +11,8 @@
 //!   item is never compared (it's −∞).
 
 use crate::{Error, ReaderLimits, Result};
-use flate2::{Decompress, FlushDecompress, Status};
+use miniz_oxide::inflate::stream::{InflateState, inflate};
+use miniz_oxide::{DataFormat, MZFlush, MZStatus};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
@@ -183,23 +184,24 @@ fn append_tag(out: &mut Vec<u8>, data: &[u8], limit: usize) -> Result<()> {
 }
 
 fn inflate_tag(tag: &[u8], limit: usize) -> Result<Vec<u8>> {
-    let mut decoder = Decompress::new(false);
+    let mut decoder = InflateState::new_boxed(DataFormat::Raw);
+    let mut input = tag;
     let mut out = Vec::new();
     let mut chunk = [0; 8192];
     loop {
-        let (input, output) = (decoder.total_in(), decoder.total_out());
-        let status = decoder
-            .decompress(&tag[input as usize..], &mut chunk, FlushDecompress::None)
-            .map_err(|e| corrupt(&format!("bad compressed tag: {e}")))?;
-        let produced = (decoder.total_out() - output) as usize;
-        append_tag(&mut out, &chunk[..produced], limit)?;
-        if status == Status::StreamEnd {
-            if decoder.total_in() != tag.len() as u64 {
+        let step = inflate(&mut decoder, input, &mut chunk, MZFlush::None);
+        let status = step
+            .status
+            .map_err(|e| corrupt(&format!("bad compressed tag: {e:?}")))?;
+        input = &input[step.bytes_consumed..];
+        append_tag(&mut out, &chunk[..step.bytes_written], limit)?;
+        if status == MZStatus::StreamEnd {
+            if !input.is_empty() {
                 return Err(corrupt("extra bytes after compressed tag"));
             }
             return Ok(out);
         }
-        if decoder.total_in() == input && produced == 0 {
+        if step.bytes_consumed == 0 && step.bytes_written == 0 {
             return Err(corrupt("incomplete compressed tag"));
         }
     }
