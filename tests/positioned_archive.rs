@@ -314,3 +314,66 @@ fn caller_supplied_source_serves_metadata_and_content_without_a_path() {
     assert_eq!(&tail, b"tail");
     assert!(Archive::from_positioned(bytes, 4, ArchiveLimits::default()).is_err());
 }
+
+#[test]
+fn title_prefix_reads_only_probed_header_rows() {
+    use std::ops::Range;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+
+    #[derive(Debug)]
+    struct Counted {
+        bytes: Vec<u8>,
+        title_table: Range<usize>,
+        title_bytes: AtomicUsize,
+    }
+    impl zimru::archive::PositionedInput for Counted {
+        fn read_exact_at(&self, at: u64, out: &mut [u8]) -> std::io::Result<()> {
+            let pos = usize::try_from(at).unwrap();
+            let end = pos + out.len();
+            let inspected = end
+                .min(self.title_table.end)
+                .saturating_sub(pos.max(self.title_table.start));
+            self.title_bytes.fetch_add(inspected, Ordering::Relaxed);
+            out.copy_from_slice(
+                self.bytes
+                    .get(pos..end)
+                    .ok_or(std::io::ErrorKind::UnexpectedEof)?,
+            );
+            Ok(())
+        }
+    }
+    const COUNT: usize = 65_536;
+    let paths = 4096;
+    let titles = paths + COUNT * 8;
+    let dirents = titles + COUNT * 4;
+    let mut bytes = vec![0; dirents];
+    bytes[..4].copy_from_slice(b"ZIM\x04");
+    bytes[4..6].copy_from_slice(&5u16.to_le_bytes());
+    bytes[24..28].copy_from_slice(&(COUNT as u32).to_le_bytes());
+    for (index, pos) in [(32, paths), (40, titles), (56, 80)] {
+        bytes[index..index + 8].copy_from_slice(&(pos as u64).to_le_bytes());
+    }
+    bytes[80..91].copy_from_slice(b"text/html\0\0");
+    for i in 0..COUNT {
+        let pos = bytes.len() as u64;
+        bytes[paths + 8 * i..paths + 8 * i + 8].copy_from_slice(&pos.to_le_bytes());
+        bytes[titles + 4 * i..titles + 4 * i + 4].copy_from_slice(&(i as u32).to_le_bytes());
+        let mut item = [0; 16];
+        item[3] = b'A';
+        bytes.extend_from_slice(&item);
+        bytes.extend_from_slice(format!("{i:05}\0\0").as_bytes());
+    }
+    let size = bytes.len() as u64;
+    let source = Arc::new(Counted {
+        bytes,
+        title_table: titles..dirents,
+        title_bytes: AtomicUsize::new(0),
+    });
+    let arc = Archive::from_positioned(source.clone(), size, ArchiveLimits::default()).unwrap();
+    assert_eq!(arc.title_count().unwrap(), COUNT as u32);
+    assert_eq!(arc.title_prefix_range(b'A', "5432").unwrap(), 54320..54330);
+    assert_eq!(arc.entry_by_title_index(54321).unwrap().title(), "54321");
+    assert!(source.title_bytes.load(Ordering::Relaxed) < COUNT * 4 / 2);
+    assert_eq!(arc.title_listing().unwrap().len(), COUNT);
+}

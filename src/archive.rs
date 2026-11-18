@@ -217,6 +217,44 @@ impl<T> TableCache<T> {
     }
 }
 
+/// A title table can be probed in place unless its archive item is compressed.
+#[derive(Debug)]
+enum TitleOrder {
+    Direct { offset: u64, count: u32 },
+    Decoded(Arc<[u32]>),
+}
+
+impl TitleOrder {
+    fn count(&self) -> u32 {
+        match self {
+            Self::Direct { count, .. } => *count,
+            Self::Decoded(ids) => ids.len() as u32,
+        }
+    }
+
+    fn id(&self, archive: &Archive, row: u32) -> Result<u32> {
+        if row >= self.count() {
+            return Err(Error::BadTitleIndex(row, self.count()));
+        }
+        match self {
+            Self::Direct { offset, .. } => archive
+                .core
+                .storage
+                .parse(offset + u64::from(row) * 4, |bytes| raw::u32_at(bytes, 0)),
+            Self::Decoded(ids) => Ok(ids[row as usize]),
+        }
+    }
+
+    fn all(&self, archive: &Archive) -> Result<Arc<[u32]>> {
+        match self {
+            Self::Direct { offset, count } => Ok(archive
+                .read_table(*offset, *count, u32::from_le_bytes)?
+                .into()),
+            Self::Decoded(ids) => Ok(ids.clone()),
+        }
+    }
+}
+
 #[derive(Debug)]
 struct ArchiveCore {
     storage: Storage,
@@ -229,6 +267,7 @@ struct ArchiveCore {
     /// Cached title-order listing: dirent indices sorted by (namespace, title).
     /// Prefer the modern front-article subset at `X/listing/titleOrdered/v1`;
     /// otherwise use the full header/v0 table.
+    title_order: TableCache<TitleOrder>,
     title_listing: TableCache<Arc<[u32]>>,
     /// Cached `(article_count, media_count)` for the content namespace,
     /// computed on first request via [`Archive::article_and_media_counts`].
@@ -347,6 +386,7 @@ impl Archive {
                 mimes,
                 file_len,
                 cluster_cache: Mutex::new(ClusterByteCache::new(DEFAULT_CLUSTER_CACHE_MAX_BYTES)),
+                title_order: TableCache::default(),
                 title_listing: TableCache::default(),
                 content_counts: OnceLock::new(),
                 sorted_cluster_offsets: TableCache::default(),
@@ -481,61 +521,53 @@ impl Archive {
 
     /// Look up an entry by index in the title-pointer list (title order).
     pub fn entry_by_title_index(&self, idx: u32) -> Result<Entry> {
-        let listing = self.title_listing()?;
-        let url_index = *listing
-            .get(idx as usize)
-            .ok_or(Error::BadTitleIndex(idx, listing.len() as u32))?;
-        self.entry_by_url_index(url_index)
+        self.entry_by_url_index(self.title_order()?.id(self, idx)?)
     }
 
-    /// Number of entries in the title-order listing. A modern v1 listing
-    /// contains only the selected front articles, not all content or media.
+    /// Number of entries in the preferred title-order listing. Compressed
+    /// listings use the same bounded first load as [`Self::title_listing`].
     pub fn title_count(&self) -> Result<u32> {
-        Ok(self.title_listing()?.len() as u32)
+        Ok(self.title_order()?.count())
     }
 
-    /// Returns the title-order listing as dirent indices.
-    ///
-    /// Modern archives prefer `X/listing/titleOrdered/v1`, the selected
-    /// front-article subset, even when a full header title table also exists.
-    /// Otherwise the full header table or older v0 listing is used.
+    /// Materialize the preferred title-order listing as dirent indices. Prefix
+    /// searches and individual title lookups probe directly accessible listings in place.
+    /// A compressed listing is decoded once. Its cluster admits up to 65 MiB of
+    /// stored data, 64 MiB of decoded data, a 128 MiB XZ decoder and a 64 MiB
+    /// Zstandard window. Stricter caller-supplied cluster limits take precedence.
     pub fn title_listing(&self) -> Result<Arc<[u32]>> {
         self.core
             .title_listing
-            .get_or_try_init(|| self.load_title_listing())
+            .get_or_try_init(|| self.title_order()?.all(self))
             .cloned()
     }
 
-    fn load_title_listing(&self) -> Result<Arc<[u32]>> {
-        let v = if self.core.header.uses_new_namespaces() {
-            self.named_title_listing("listing/titleOrdered/v1")?
-        } else {
-            None
-        };
-        let v = match v {
-            Some(v) => v,
-            None if self.core.header.title_ptr_pos != u64::MAX => self.header_title_listing()?,
-            None => match self.named_title_listing("listing/titleOrdered/v0")? {
-                Some(v) => v,
-                None => self
-                    .named_title_listing("listing/titleOrdered")?
-                    .ok_or(Error::EntryNotFound)?,
-            },
-        };
-        Ok(v)
+    fn title_order(&self) -> Result<&TitleOrder> {
+        self.core.title_order.get_or_try_init(|| {
+            if self.header().uses_new_namespaces() {
+                if let Some(order) = self.named_title_listing("listing/titleOrdered/v1")? {
+                    return Ok(order);
+                }
+            }
+            if self.header().title_ptr_pos != u64::MAX {
+                return self.header_title_listing();
+            }
+            if let Some(order) = self.named_title_listing("listing/titleOrdered/v0")? {
+                return Ok(order);
+            }
+            self.named_title_listing("listing/titleOrdered")?
+                .ok_or(Error::EntryNotFound)
+        })
     }
 
-    fn header_title_listing(&self) -> Result<Arc<[u32]>> {
-        Ok(self
-            .read_table(
-                self.core.header.title_ptr_pos,
-                self.entry_count(),
-                u32::from_le_bytes,
-            )?
-            .into())
+    fn header_title_listing(&self) -> Result<TitleOrder> {
+        let offset = self.header().title_ptr_pos;
+        let count = self.entry_count();
+        self.table_range(offset, count, 4)?;
+        Ok(TitleOrder::Direct { offset, count })
     }
 
-    fn named_title_listing(&self, path: &str) -> Result<Option<Arc<[u32]>>> {
+    fn named_title_listing(&self, path: &str) -> Result<Option<TitleOrder>> {
         let entry = match self.entry_by_ns_path(NS_INDEX, path) {
             Ok(entry) => entry,
             Err(Error::EntryNotFound) => return Ok(None),
@@ -547,19 +579,27 @@ impl Archive {
             if !direct.size.is_multiple_of(4) || direct.size / 4 > u64::from(self.entry_count()) {
                 return Err(Error::Truncated(direct.file_offset));
             }
-            let listing = self.read_table(
-                direct.file_offset,
-                (direct.size / 4) as u32,
-                u32::from_le_bytes,
-            )?;
-            return Ok(Some(listing.into()));
+            return Ok(Some(TitleOrder::Direct {
+                offset: direct.file_offset,
+                count: (direct.size / 4) as u32,
+            }));
         }
-        let blob = item.get_data()?;
-        let bytes = blob.data();
+        // Legacy writers may compress a listing. Apply a cold-load limit even
+        // when the caller did not set a general archive decompression policy.
+        let cluster = self.cluster_with_limits(
+            item.cluster_index(),
+            crate::ClusterReadLimits {
+                max_decoded_bytes: 64 << 20,
+                max_stored_bytes: 65 << 20,
+                xz_memory_bytes: 128 << 20,
+                zstd_window_log: 26,
+            },
+        )?;
+        let bytes = cluster.blob(item.blob_index())?;
         if !bytes.len().is_multiple_of(4) || bytes.len() / 4 > self.entry_count() as usize {
             return Err(Error::Truncated(bytes.len() as u64));
         }
-        Ok(Some(
+        Ok(Some(TitleOrder::Decoded(
             bytes
                 .as_chunks::<4>()
                 .0
@@ -567,7 +607,7 @@ impl Archive {
                 .copied()
                 .map(u32::from_le_bytes)
                 .collect(),
-        ))
+        )))
     }
 
     /// Modeled after libzim's `Archive::getEntryByPath(path)` — for "new
@@ -796,13 +836,13 @@ impl Archive {
     /// fall back to a path-order scan for entries excluded from a modern
     /// front-article subset (including media and non-content namespaces).
     pub fn entry_by_ns_title(&self, ns: u8, title: &str) -> Result<Entry> {
-        let listing = self.title_listing()?;
-        if !listing.is_empty() {
-            let mut lo = 0usize;
-            let mut hi = listing.len();
+        let listing = self.title_order()?;
+        if listing.count() != 0 {
+            let mut lo = 0u32;
+            let mut hi = listing.count();
             while lo < hi {
                 let mid = lo + (hi - lo) / 2;
-                let url_idx = listing[mid];
+                let url_idx = listing.id(self, mid)?;
                 let off = self.url_pointer(url_idx)?;
                 let cmp = self.core.storage.parse(off, |buf| {
                     let (d_ns, d_key) = Dirent::title_key_at(buf, 0)?;
@@ -826,7 +866,7 @@ impl Archive {
         // miss authoritative. Only a v1 front-article subset can hide the
         // requested entry, and only then is the linear scan justified.
         let n = self.core.header.entry_count;
-        if listing.len() as u32 == n {
+        if listing.count() == n {
             return Err(Error::EntryNotFound);
         }
         for i in 0..n {
@@ -850,33 +890,39 @@ impl Archive {
     /// Designed to back `SuggestionSearcher` fallbacks for ZIMs that lack a
     /// Xapian title index: callers iterate `lo..hi` and call
     /// [`Archive::entry_by_title_index`] on each to materialize entries.
-    /// Two binary searches over [`Archive::title_listing`] using
-    /// [`Dirent::title_key_at`] (no allocation per probe) — `O(log N)`
-    /// regardless of prefix length or match count.
+    /// Two binary searches over the preferred title listing using
+    /// [`Dirent::title_key_at`] perform `O(log N)` title comparisons once the
+    /// preferred listing has been located. The first lookup may also prepare
+    /// cluster offsets or decode a compressed listing under [`Self::title_listing`]'s limits.
     ///
     /// With a modern v1 listing, only selected C-namespace front articles
     /// are covered. Full header/v0 listings span every namespace.
     pub fn title_prefix_range(&self, ns: u8, prefix: &str) -> Result<std::ops::Range<u32>> {
-        let listing = self.title_listing()?;
-        let lo = self.lower_bound_in_title_listing(&listing, ns, prefix.as_bytes())?;
+        let listing = self.title_order()?;
+        let lo = self.lower_bound_in_title_listing(listing, ns, prefix.as_bytes())?;
         // The first key strictly greater than every UTF-8 string starting
         // with `prefix` is `prefix` followed by `0xFF` — `0xFF` never appears
         // in valid UTF-8 so this is a safe sentinel.
         let mut succ = Vec::with_capacity(prefix.len() + 1);
         succ.extend_from_slice(prefix.as_bytes());
         succ.push(0xFF);
-        let hi = self.lower_bound_in_title_listing(&listing, ns, &succ)?;
-        Ok(lo as u32..hi as u32)
+        let hi = self.lower_bound_in_title_listing(listing, ns, &succ)?;
+        Ok(lo..hi)
     }
 
     /// First index in `listing` where the dirent's `(namespace, title)` is
     /// `>= (ns, key)`. Helper for [`Archive::title_prefix_range`].
-    fn lower_bound_in_title_listing(&self, listing: &[u32], ns: u8, key: &[u8]) -> Result<usize> {
-        let mut lo = 0usize;
-        let mut hi = listing.len();
+    fn lower_bound_in_title_listing(
+        &self,
+        listing: &TitleOrder,
+        ns: u8,
+        key: &[u8],
+    ) -> Result<u32> {
+        let mut lo = 0u32;
+        let mut hi = listing.count();
         while lo < hi {
             let mid = lo + (hi - lo) / 2;
-            let url_idx = listing[mid];
+            let url_idx = listing.id(self, mid)?;
             let off = self.url_pointer(url_idx)?;
             let cmp = self.core.storage.parse(off, |buf| {
                 let (d_ns, title) = Dirent::title_key_at(buf, 0)?;
@@ -1597,7 +1643,7 @@ impl Archive {
         let mut found = false;
         if self.core.header.title_ptr_pos != u64::MAX {
             found = true;
-            if !self.valid_title_listing(&self.header_title_listing()?, false)? {
+            if !self.valid_title_listing(&self.header_title_listing()?.all(self)?, false)? {
                 return Ok(false);
             }
         }
@@ -1608,7 +1654,7 @@ impl Archive {
         ] {
             if let Some(listing) = self.named_title_listing(path)? {
                 found = true;
-                if !self.valid_title_listing(&listing, subset)? {
+                if !self.valid_title_listing(&listing.all(self)?, subset)? {
                     return Ok(false);
                 }
             }

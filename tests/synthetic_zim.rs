@@ -1252,3 +1252,45 @@ fn modern_v0_only_archive_keeps_its_full_title_listing() {
     assert!(archive.check_title_index().unwrap());
     std::fs::remove_file(path).unwrap();
 }
+
+#[test]
+fn compressed_title_listing_obeys_the_archive_decode_policy() {
+    use zimru::{ArchiveLimits, ClusterReadLimits};
+    let entry = Dir::Art(Article {
+        namespace: b'X',
+        url: "listing/titleOrdered/v1",
+        title: "",
+        mime: 0,
+        cluster: 0,
+        blob: 0,
+    });
+    let zim = build_zim(
+        true,
+        None,
+        &[entry],
+        &[0],
+        &[build_zstd_cluster(&[&0u32.to_le_bytes()])],
+        &["application/octet-stream"],
+        false,
+    );
+    let path = write_temp("compressed-title-limits", &zim);
+    let archive = Archive::open(&path).unwrap();
+    assert_eq!(archive.title_count().unwrap(), 1);
+    assert_eq!(
+        archive.entry_by_title_index(0).unwrap().path(),
+        "listing/titleOrdered/v1"
+    );
+    let limits = ArchiveLimits {
+        cluster: Some(ClusterReadLimits {
+            max_decoded_bytes: 4,
+            max_stored_bytes: 1 << 20,
+            xz_memory_bytes: 1 << 20,
+            zstd_window_log: 20,
+        }),
+        ..Default::default()
+    };
+    let limited =
+        Archive::from_file_with_limits(std::fs::File::open(&path).unwrap(), limits).unwrap();
+    assert!(limited.title_count().is_err());
+    std::fs::remove_file(path).unwrap();
+}

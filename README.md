@@ -49,10 +49,10 @@ and benchmark notes are not a current support matrix.
 
 | Area | Supported behavior | Limits / differences |
 |---|---|---|
-| ZIM versions | Legacy 5.0 and 6.0 namespaces; modern 6.1+ namespaces | Major versions other than 5 and 6 are rejected. Materializing retired linktarget/deleted directory records returns an unsupported-format error. |
+| ZIM versions | Legacy namespaces for minor version 0 and content namespaces for minor versions 1 and later | Major versions other than 5 and 6 are rejected. Materializing retired linktarget/deleted directory records returns an unsupported-format error. |
 | Cluster compression | Uncompressed (0/1), XZ (4), Zstd (5); standard and extended offsets | Deprecated zlib/bzip2 clusters are rejected. Decompression has explicit size limits. |
 | Reader | Path/title lookup, metadata, redirects, cluster access, checksum and structural checks | Uses positioned reads on one open file. Keep its contents stable for consistent cached reads. |
-| Title listings | Modern article-only v1 listing, with legacy listing fallback | Article title iteration is not an enumeration of all resources; use path iteration for all entries. |
+| Title listings | Modern article-only v1 listing with legacy listing fallback. Individual titles and prefix ranges read directly accessible table rows on demand | A compressed title listing requires decoding its cluster, bounded at 64 MiB decoded, 65 MiB stored, 128 MiB XZ memory and a 64 MiB Zstandard window. Use path iteration for all resources. |
 | Writer | ZIM 6.3 output, metadata, illustrations, redirects, raw/XZ/Zstd clusters | Front articles are HTML entries and redirects resolving to them. Directory fields must be valid format strings; duplicate entry keys are rejected. |
 | Multipart archives | `zimsplit` creates cluster-boundary-aligned parts | The reader does not transparently join `.zimaa`, `.zimab`, etc. Join them in suffix order before opening with zimru. |
 | C API | Reader and writer handles, blobs, error codes, metadata, chunked input | Not libzim's C++ ABI. Follow the generated header's ownership and error contracts. |

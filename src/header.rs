@@ -87,9 +87,9 @@ impl Header {
 
     /// True for ZIM files that use the "new" namespace scheme (`C` for content,
     /// `M` for metadata, `W` for well-known, `X` for indexes).
-    /// New namespaces were introduced in version 6.1; version 6.0 is legacy.
+    /// The minor version selects the scheme for both supported major versions.
     pub fn uses_new_namespaces(&self) -> bool {
-        self.major_version > 6 || (self.major_version == 6 && self.minor_version >= 1)
+        self.minor_version >= 1
     }
 
     pub fn has_main_page(&self) -> bool {
@@ -104,6 +104,22 @@ impl Header {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn minor_version_selects_namespaces_for_supported_major_versions() {
+        for major in [5u16, 6] {
+            for minor in [0u16, 1, 2] {
+                let mut bytes = [0; HEADER_SIZE];
+                bytes[..4].copy_from_slice(&MAGIC.to_le_bytes());
+                bytes[4..6].copy_from_slice(&major.to_le_bytes());
+                bytes[6..8].copy_from_slice(&minor.to_le_bytes());
+                assert_eq!(
+                    Header::parse(&bytes).unwrap().uses_new_namespaces(),
+                    minor > 0
+                );
+            }
+        }
+    }
 
     #[test]
     fn mime_list_at_72_has_no_checksum_field() {
