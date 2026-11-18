@@ -68,7 +68,7 @@ Use `Archive::from_file_with_limits` to select metadata, table and cluster limit
 Use `Item::read_at` for bounded reads from large uncompressed blobs. The optional
 `legacy-mmap` feature exposes `Archive::from_mmap` for existing callers.
 The review covers native codecs, the C API, transitive unsafe Rust and
-measured performance. [Memory-safety review](docs/memory-safety-review.md)
+measured performance. [Memory-safety review](docs/memory-safety-review.md) · [Adversarial and performance review](docs/positioned-reader-review.md)
 
 ### Tool inventory
 

@@ -1,0 +1,106 @@
+{
+  "climate-search-broad": {
+    "baseline_ms": 1.488707,
+    "candidate_ms": 1.602389,
+    "paired_delta_pct": 2.109265528435822,
+    "pair_bootstrap_pct_95": [
+      0.09388551089835051,
+      10.243221967368555
+    ],
+    "baseline_rss_kib": 3296,
+    "candidate_rss_kib": 2660,
+    "pairs": 31,
+    "hits": 10
+  },
+  "climate-search-selective": {
+    "baseline_ms": 1.213622,
+    "candidate_ms": 1.158018,
+    "paired_delta_pct": 0.8864463527807676,
+    "pair_bootstrap_pct_95": [
+      -6.874092035331891,
+      5.557834402568362
+    ],
+    "baseline_rss_kib": 3168,
+    "candidate_rss_kib": 2632,
+    "pairs": 31,
+    "hits": 1
+  },
+  "climate-suggest-broad": {
+    "baseline_ms": 2.458701,
+    "candidate_ms": 2.3782,
+    "paired_delta_pct": -1.5002878635721473,
+    "pair_bootstrap_pct_95": [
+      -11.499489757537951,
+      3.5462743936528485
+    ],
+    "baseline_rss_kib": 3612,
+    "candidate_rss_kib": 2984,
+    "pairs": 31,
+    "hits": 10
+  },
+  "climate-suggest-selective": {
+    "baseline_ms": 1.244268,
+    "candidate_ms": 1.207553,
+    "paired_delta_pct": 3.4272359330948188,
+    "pair_bootstrap_pct_95": [
+      -4.493174262864752,
+      7.676579610740619
+    ],
+    "baseline_rss_kib": 3352,
+    "candidate_rss_kib": 2600,
+    "pairs": 31,
+    "hits": 2
+  },
+  "nollywood-search-broad": {
+    "baseline_ms": 1.231499,
+    "candidate_ms": 1.237007,
+    "paired_delta_pct": 2.7202676833486095,
+    "pair_bootstrap_pct_95": [
+      -5.195862928025097,
+      9.012721226692877
+    ],
+    "baseline_rss_kib": 2780,
+    "candidate_rss_kib": 2600,
+    "pairs": 31,
+    "hits": 10
+  },
+  "nollywood-search-selective": {
+    "baseline_ms": 1.327413,
+    "candidate_ms": 1.348606,
+    "paired_delta_pct": -2.111386544474414,
+    "pair_bootstrap_pct_95": [
+      -6.785299044240811,
+      5.714865713716666
+    ],
+    "baseline_rss_kib": 2876,
+    "candidate_rss_kib": 2792,
+    "pairs": 31,
+    "hits": 10
+  },
+  "nollywood-suggest-broad": {
+    "baseline_ms": 1.525152,
+    "candidate_ms": 1.524021,
+    "paired_delta_pct": -1.9114378938836052,
+    "pair_bootstrap_pct_95": [
+      -7.416762377393027,
+      7.790043221921472
+    ],
+    "baseline_rss_kib": 2892,
+    "candidate_rss_kib": 2728,
+    "pairs": 31,
+    "hits": 10
+  },
+  "nollywood-suggest-selective": {
+    "baseline_ms": 1.467065,
+    "candidate_ms": 1.405081,
+    "paired_delta_pct": -1.210802080964557,
+    "pair_bootstrap_pct_95": [
+      -11.977020338162115,
+      7.645289498239594
+    ],
+    "baseline_rss_kib": 2932,
+    "candidate_rss_kib": 2664,
+    "pairs": 31,
+    "hits": 1
+  }
+}
