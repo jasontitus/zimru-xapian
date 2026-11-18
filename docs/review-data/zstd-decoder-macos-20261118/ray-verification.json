@@ -1,0 +1,80 @@
+{
+  "host": "macOS-27.2.1-arm64-arm-64bit-Mach-O",
+  "rounds": 1,
+  "binary_sha256": {
+    "codec_read": {
+      "native": "7bd2f57e4dc39f4ce6e9d90a1bcbfb29f38e658779c72436062f1357aaeefe33",
+      "production": "d1ef9c14a23fcef0f583570fcddb1924badfb9d5f9adc8fb6c765bee20be2585",
+      "experiment": "0327365295423b4c90064d0501d1c36ca16140f9c9583d2a4997e5dd0ed354d1"
+    },
+    "blob_manifest": {
+      "native": "8fe5850fb3fc21cca3fa837f1484357213d993e630bbe51d156ec775cf0c6630",
+      "production": "6387c38f5f65237bebec6566223a58667f86a486cbc20fd4c8cf3a4bf4f488cc",
+      "experiment": "c0f4ff7b74ac397c825b4a69a8f02a89b973aeaf01f51cf86d462697cb76c22b"
+    }
+  },
+  "archives": [
+    {
+      "file": "wikipedia_en_ray-charles_mini.zim",
+      "sha256": "9aa68a83cf9a7d9449724b6c722f797e2a307e290a34b083df717028cd42330d",
+      "manifest_sha256": "868a1f272d90fd7250dceea84db15e1e197cd173e73ec8117a4750a62f34a505",
+      "samples": {
+        "native": [
+          {
+            "elapsed_ms": 1.413791,
+            "cpu_ms": 4.522,
+            "peak_rss_bytes": 10141696,
+            "blob_bytes": 2829531
+          }
+        ],
+        "production": [
+          {
+            "elapsed_ms": 2.001375,
+            "cpu_ms": 4.603999999999999,
+            "peak_rss_bytes": 6914048,
+            "blob_bytes": 2829531
+          }
+        ],
+        "experiment": [
+          {
+            "elapsed_ms": 1.866083,
+            "cpu_ms": 4.9559999999999995,
+            "peak_rss_bytes": 6930432,
+            "blob_bytes": 2829531
+          }
+        ]
+      }
+    },
+    {
+      "file": "wikipedia_en_ray-charles_nopic.zim",
+      "sha256": "59eb2b233b1fcdd7dfd44679a519501dbd7b77fbee80ac46ad90a57899459e62",
+      "manifest_sha256": "ec470dab6032f12a639b6c21bbbcb4e98cc709be18d5e55c6c7e48132d62fb70",
+      "samples": {
+        "native": [
+          {
+            "elapsed_ms": 5.012958,
+            "cpu_ms": 7.969,
+            "peak_rss_bytes": 11452416,
+            "blob_bytes": 11177635
+          }
+        ],
+        "production": [
+          {
+            "elapsed_ms": 8.509959,
+            "cpu_ms": 11.302,
+            "peak_rss_bytes": 11419648,
+            "blob_bytes": 11177635
+          }
+        ],
+        "experiment": [
+          {
+            "elapsed_ms": 7.939708,
+            "cpu_ms": 10.716999999999999,
+            "peak_rss_bytes": 11436032,
+            "blob_bytes": 11177635
+          }
+        ]
+      }
+    }
+  ]
+}
