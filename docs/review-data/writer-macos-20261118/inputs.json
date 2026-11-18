@@ -1,0 +1,26 @@
+{
+  "chemistry": {
+    "digest": "bc2efea8d48fbce0176f65565f266d53",
+    "entries": 12600,
+    "decoded_total": 82395295,
+    "sha256": "47849c47e10929b55c954a15691191fa1d5ce07570d787e93d9a1d4cfba3933b",
+    "file": "wikipedia_zh_chemistry_mini.zim",
+    "user_content_bytes": 74495498
+  },
+  "climate": {
+    "digest": "9d73b69118547ab5f352dfda043e8993",
+    "entries": 20551,
+    "decoded_total": 34207840,
+    "sha256": "3485a2c475a2356331f33f137ce26ed7116e62c7062d73a7773362d6dff005f4",
+    "file": "wikipedia_en_climate_change_mini_2024-06.zim",
+    "user_content_bytes": 31629019
+  },
+  "nollywood": {
+    "digest": "472dd176dc93fde578358884cfb244df",
+    "entries": 4579,
+    "decoded_total": 110834217,
+    "sha256": "faa53e0c8ef641206867ce21f0e107d4e2aa9012e3b2263f05fe9bddf4f72aa3",
+    "file": "wikipedia_en_nollywood_maxi_2026-10.zim",
+    "user_content_bytes": 107705532
+  }
+}
