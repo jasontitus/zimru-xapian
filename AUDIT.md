@@ -1,6 +1,6 @@
 # Review of the standalone Glass reader and writer
 
-The codec and storage descriptions below record the original audit. The current paired branches use positioned I/O and Rust Zstandard, XZ and Glass DEFLATE implementations. [Current codec review](https://github.com/jasontitus/zimru-xapian/blob/1b07bd682638694fc2a8d3152e507e351941b5e8/docs/rust-codecs.md)
+The codec and storage descriptions below record the original audit. The current paired branches use positioned I/O and Rust Zstandard, XZ and Glass DEFLATE implementations. [Current codec review](https://github.com/jasontitus/zimru-xapian/blob/ca5e62e965e0667120319906af2aee9791dc94fb/docs/rust-codecs.md)
 
 Reviewed on 2026-11-17 against the standalone fork at `54b39d4`. The changes cover the search engine, index writer, archive/JSONL command-line boundary and locked dependency graph. Reviewers challenged changes written by other reviewers. Native Xapian and libzim served as independent references.
 
