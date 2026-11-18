@@ -119,10 +119,26 @@ impl Compressor {
     /// without the frame header or checksum. The output depends only on
     /// (`self.config()`, `src`, `job`, `dict`), never on which context runs it.
     pub fn compress_job(&mut self, src: &[u8], job: &Job, dict: Option<&EncoderDictionary>, out: &mut Vec<u8>) -> Result<()> {
+        self.job_blocks(src, job, dict, false, out)
+    }
+
+    /// Encode independent, dictionary-free blocks for a frame whose header was
+    /// written by the caller. Use the configured window for match distances.
+    /// The header must allow that window, or describe a single segment holding
+    /// the entire input. The ordinary frame and parallel APIs derive their own
+    /// window from the compression level.
+    pub fn compress_job_with_frame_window(&mut self, src: &[u8], job: &Job, out: &mut Vec<u8>) -> Result<()> {
+        self.job_blocks(src, job, None, true, out)
+    }
+
+    fn job_blocks(&mut self, src: &[u8], job: &Job, dict: Option<&EncoderDictionary>, use_frame_window: bool, out: &mut Vec<u8>) -> Result<()> {
         if job.start > job.end || job.end > src.len() || job.prefix_start > job.start {
             return Err(Error::Parameter("job range outside the input"));
         }
-        let p = self.frame_params(src.len(), dict)?;
+        let mut p = self.frame_params(src.len(), dict)?;
+        if use_frame_window {
+            p.window_log = self.cfg.window_log;
+        }
         let window_start = job.start.saturating_sub(1 << p.window_log);
         let job = Job { prefix_start: job.prefix_start.max(window_start), ..*job };
         self.blocks(src, &job, if job.first { dict } else { None }, &p, out)

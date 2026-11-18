@@ -30,6 +30,19 @@ fn check(name: &str, data: &[u8], frame: &[u8], cdict: Option<&[u8]>, ddict: Opt
 }
 
 #[test]
+fn invalid_job_range_precedes_dictionary_mismatch_and_preserves_output() {
+    let dict = Dictionary::new(b"sample history", DictionaryFormat::Raw { id: 0 }).unwrap();
+    let dictionary = EncoderDictionary::new(&dict, 4).unwrap();
+    let mut compressor = Compressor::new(cfg(3, false)).unwrap();
+    let job = zstd_rs::par::Job { start: 0, end: 2, prefix_start: 0, first: true, last: true };
+    let mut out = vec![42];
+    let expected = Err(zstd_rs::Error::Parameter("job range outside the input"));
+    assert_eq!(compressor.compress_job(b"x", &job, Some(&dictionary), &mut out), expected);
+    assert_eq!(compressor.compress_job_with_frame_window(b"x", &job, &mut out), expected);
+    assert_eq!(out, [42]);
+}
+
+#[test]
 fn all_levels_all_sizes() {
     for (name, data) in common::corpus() {
         for &level in LEVELS {

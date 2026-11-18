@@ -27,6 +27,7 @@ pub(super) struct Encoder<W> {
     workers: Vec<Worker>,
     buffer: Vec<u8>,
     job_bytes: usize,
+    use_frame_window: bool,
     batch_bytes: usize,
     prefix_bytes: usize,
     history_len: usize,
@@ -65,6 +66,7 @@ impl<W: Write> Encoder<W> {
             window_log: job_log,
             ..CompressionConfig::DEFAULT
         };
+        let use_frame_window = long_window && level == 3 && workers <= 1;
         let worker_count = size
             .div_ceil(job_bytes as u64)
             .clamp(1, workers.clamp(1, max_workers) as u64) as usize;
@@ -98,6 +100,7 @@ impl<W: Write> Encoder<W> {
             workers,
             buffer,
             job_bytes,
+            use_frame_window,
             batch_bytes,
             prefix_bytes,
             history_len: 0,
@@ -153,10 +156,14 @@ impl<W: Write> Encoder<W> {
                 last: last && index + 1 == jobs,
             };
             worker.encoded.clear();
-            worker
-                .codec
-                .compress_job(bytes, &job, None, &mut worker.encoded)
-                .map_err(io::Error::other)
+            // A level-3 single worker owns an 8 MiB frame window. The default
+            // level-3 matcher would discard history older than 2 MiB.
+            if self.use_frame_window {
+                worker.codec.compress_job_with_frame_window(bytes, &job, &mut worker.encoded)
+            } else {
+                worker.codec.compress_job(bytes, &job, None, &mut worker.encoded)
+            }
+            .map_err(io::Error::other)
         };
         let workers = &mut self.workers[..jobs];
         if jobs == 1 {
@@ -234,6 +241,27 @@ mod tests {
                 input
             );
         }
+    }
+
+    #[test]
+    fn single_worker_level_three_reuses_history_beyond_two_mib() {
+        let mut state = 1u32;
+        let block: Vec<u8> = (0..3 << 20).map(|_| {
+            state ^= state << 13;
+            state ^= state >> 17;
+            state ^= state << 5;
+            state as u8
+        }).collect();
+        // Four copies also exercise the first boundary between 8 MiB jobs.
+        let input = block.repeat(4);
+        let mut encoder = Encoder::new(Vec::new(), input.len() as u64, 3, 1).unwrap();
+        for chunk in input.chunks(65_536) {
+            encoder.write_all(chunk).unwrap();
+        }
+        let frame = encoder.finish().unwrap();
+        assert!(frame.len() < 2 * block.len(), "encoded {} bytes", frame.len());
+        assert_eq!(zstd_safe::find_frame_compressed_size(&frame).unwrap(), frame.len());
+        assert_eq!(::zstd::stream::decode_all(frame.as_slice()).unwrap(), input);
     }
 
     #[test]
