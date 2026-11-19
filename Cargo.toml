@@ -18,6 +18,8 @@ autobins = false
 
 [features]
 default = ["writer"]
+# Keep the decoded allocation for item reads. The public slice API remains available.
+retained-cluster-buffers = []
 # Enable the ZIM file writer (`zimru::writer::Creator`) and the
 # `zimrecreate` / `zimwriterfs` binaries. With default features disabled
 # the crate is reader-only. miniz_oxide backs `zimwriterfs -x/--inflateHtml`.
