@@ -1,0 +1,98 @@
+{
+  "source_commit": "f8ebacb919fdcb52cc332983233fb05f9d1f1290",
+  "source_tree": "3676c2561d5cede4d8e413498c46a982c3133e74",
+  "platform": "Apple M1 Ultra, ARM64 macOS 27.2.1",
+  "rustc": "1.99.1 (58cf8f9c3 2026-10-13)",
+  "build": "Optimized Cargo release with the locked default app features and custom-protocol. Tauri bundled the app, followed by the app’s regular local ad-hoc signing step. Strict deep signature verification passed.",
+  "app_resources": {
+    "signed_zip_bytes": 36773586,
+    "signed_zip_sha256": "913cff9e1ff5f955c9eb24fecb93aa7df869e77de32b3e5efd5ba78d3f4ee04d",
+    "signed_app_files": 131,
+    "signed_macho_sha256": {
+      "kiwix-mcp": "95717f9f200c6738ac86ea2ce29e9b16c5cb36d1b25d35024d21005a2d45b20d",
+      "kiwix-workbench": "dc43a7252ad4c2fbcbaeec68c03b15752ceaec7813c05cfdac877a16f17e47b2"
+    },
+    "mapped_license_source_files": 52,
+    "packaged_tendril_notices_sha256": {
+      "licenses/tendril/LICENSE-APACHE": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2",
+      "licenses/tendril/LICENSE-MIT": "60a7062291b01ba068f300612cdbdc20382ac1d4934f07bcdd7167c15299f309",
+      "licenses/tendril/SOURCE.txt": "474ff4f7065b3907e4fb4783ef950b73b5a7f0f1ee4da3e87b7c8acb8e3a16df"
+    }
+  },
+  "storage": {
+    "implementation_commit": "302193b82a9b6e3ee8c0faed6830e7e5759f4f4b",
+    "locked_package": "tendril 0.5.1",
+    "cargo_lock_sha256": "f91ea87ce949ffb0b5646ae7cc5a138a90d86c3a1830f6c67b47e016234666aa",
+    "checked_source_sha256": {
+      "lib.rs": "8b920323cf4d6fb76053a1cd95837adcb3fd7afd9f8851fb1232f53e46f7c3e8",
+      "stream.rs": "27f6c89997d1a995d4b6eda5f95d319f44ed120355a3978a0082760c7dbf8cd4"
+    },
+    "compiler_evidence": "The linked app dependency file identified both vendored storage sources, the checked HTML tokenizer and the checked input queue. The host build tools and target app resolved the same storage package."
+  },
+  "unchanged_reader_pins": {
+    "zimru": "ff8b0ab5e561b0019151d6d614131f59920ff2ee",
+    "zimru_xapian": "380d84d7bb4ba9f30144462fd6bb18e932493fc0"
+  },
+  "tests": {
+    "passed": 1257,
+    "failed": 0,
+    "ignored": 25,
+    "mode": "Full optimized app library suite, four test threads. Ignored tests were excluded.",
+    "focused_exports": {
+      "passed": 41,
+      "failed": 0,
+      "ignored": 1
+    },
+    "focused_live_pdf": {
+      "passed": 15,
+      "failed": 0
+    },
+    "storage_unit_tests": 5,
+    "storage_clippy": "Passed all targets with warnings denied.",
+    "setup_observation": "The isolated checkout initially lacked the locked frontend TypeScript dependency. Restored matching frontend dependencies and reran the same optimized binary."
+  },
+  "real_app": {
+    "method": "Launched the signed app’s headless service on loopback in a freshly created test-only profile for each archive. Compared canonical preview JSON and MHTML bytes to the signed reference. MHTML normalization changes only the per-export MIME boundary. Removed all owned profiles after shutdown.",
+    "reference": "docs/benchmarks/2026-11-18-checked-html-app-workflows.json",
+    "input_sha256": {
+      "wikipedia_en_climate_change_mini_2024-06.zim": "3485a2c475a2356331f33f137ce26ed7116e62c7062d73a7773362d6dff005f4",
+      "wikipedia_en_100_maxi_2024-01.zim": "bde9d73bb1a6b959af6cf4f00ed8f6aac6cf7f4392e28a16a46cd77228b16613",
+      "preview.zim": "64c381c2d63bff5f30ac3223292b613e6f6bbec9ef2b9e2d6818c7d9a4a578d8"
+    },
+    "matching_output_sha256": {
+      "preview wikipedia_en_climate_change_mini_2024-06.zim/Land_cover": "2d9dc4c1b47e896098503d5c9c70f50be4388ef666511008d301081b142aee90",
+      "preview wikipedia_en_climate_change_mini_2024-06.zim/Nationally_determined_contribution": "aef45fe2c638c151fdea713635e63b03b9a45a34c4759733504ea0de9d96a608",
+      "preview wikipedia_en_climate_change_mini_2024-06.zim/Greenhouse_gas_emissions_by_Russia": "67790c1864ce4be33c4a254ed43044e826e8a08ea3f5237c0e07720478d91adb",
+      "MHTML wikipedia_en_climate_change_mini_2024-06.zim/Land_cover": "a809bf65e73d87a05ec52bd172afaf6181a179848a26246f4925c58cf0b0a1fa",
+      "preview wikipedia_en_100_maxi_2024-01.zim/A/Elizabeth_II": "f5e985642d15562094b17bd741e08e6b4be0f4f256ed4f31c1cce4cb5a7805a1",
+      "preview wikipedia_en_100_maxi_2024-01.zim/A/List_of_national_parks_of_the_United_States": "051b9b0e39f05f6c43ccd78dc04efa5abf73f977168c84a55fcec7f1a25a90c7",
+      "preview wikipedia_en_100_maxi_2024-01.zim/A/Elvis_Presley": "c6e0175baf216d48f6c581ce5d51ffe75b2f6adbdbe4f5feaabfcd04ad2082ea",
+      "preview preview.zim/fallback.html": "42bbb3aa5fd22fd98312a5149d1aa76b81fbb1e61620cf81edfb4d76e268fc93",
+      "MHTML preview.zim/fallback.html": "103df8bb0fd9b72bbcebdc40fc11bcb8faa081448b38b8e1280b62d4077b9348"
+    },
+    "climate_cold_reopen": {
+      "method": "After the first managed import, two fresh processes opened the same profile, once with the archive argument and once without. Their complete searches, content checks and integrity results matched.",
+      "title": "Climate 200",
+      "rows_checked": {
+        "title": 5,
+        "fulltext": 5,
+        "suggest": 5
+      },
+      "article_text_sha256": "8ce39c87ea8ebce66b4f242ba8c2342bba87ee9facede38bed115551711dd2e7",
+      "visible_text_characters": 1154,
+      "preview_characters": 437,
+      "integrity": "valid",
+      "verified_archive_bytes": 8978455
+    }
+  },
+  "raw_sha256": {
+    "package.json": "fb5ed62024ed80925beae3dc04fbac6c6b045cc848591c0850b3be36d3ecfc85",
+    "framework-audit.json": "7c7ad1b1e5a81cc44fa98ad8a9f7378b2a4b9d5122dbe3279a20a37ffc77459f",
+    "verified-runtime.json": "72cd4d9d729e80d2c4a334f10e3302e438e24c3eeabebeb0fd5951a1941b7bf3",
+    "mac-crate-tests.log": "9683c2c8ab56910d0b9baddd0de38b6e7ec175e53cb877f06b85f413d44a855e",
+    "mac-tests-exports.log": "b4340d6875b3eb40e4af6313ee800b4809cae4e29314f1496a1eaba8471494b1",
+    "mac-tests-live-pdf.log": "ee36cdb7b5e5de6ffc4011fa0c447aba759e23ec3171bcc22ad6481312639810",
+    "mac-tests-full.log": "11ee93fead7c810c43de86b38fc6c600deaca82e3f8f29d5c204742b00d74b3f"
+  },
+  "scope": "Local signed application and parser behavior on ARM64 macOS. This acceptance run did not time operations, measure peak memory, render a final PDF, exercise a physical mobile device or notarize a distributable package."
+}
