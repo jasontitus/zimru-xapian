@@ -1,6 +1,6 @@
 # Experimental safe text storage for the HTML parser
 
-This standalone experiment replaces the byte and UTF-8 storage used by the app’s HTML parser with standard-library types. The same DOM and sanitized export bytes came back on the tested inputs. The prototype took longer than published Tendril on every measured Mac workload. Production continues to use published Tendril.
+This standalone experiment replaces the byte and UTF-8 storage used by the app’s HTML parser with standard-library types. The same DOM and sanitized export bytes came back on the tested inputs. The initial prototype took longer than published Tendril on every measured Mac article and export workload. Production continues to use published Tendril.
 
 The comparison starts from app commit `18388c2`, which provides the checked html5ever and markup5ever 0.39.0 implementations. Both arms run that scanner and dom_query 0.28.0 with default features disabled. Only the experimental harness selects this storage crate. The implementation carries Tendril 0.5.1’s original MIT and Apache license files. The application-licensed checks live outside that crate.
 
@@ -19,7 +19,7 @@ A live slice as short as nine bytes can retain its original allocation. Multiple
 
 The experiment covers the selected single-threaded UTF-8/byte consumers. Public Tendril formats beyond these two, atomic or sendable handles, optional encoding adapters, its general raw APIs, external layout compatibility and other configurations need separate implementations or evidence. The dynamic atom interner, other parser dependencies, standard-library internals and the system WebView retain their own memory-safety boundaries. Signed app integration, mobile execution and final PDF rendering are outside this test.
 
-## Performance
+## Initial prototype performance
 
 On ARM64 macOS, the table reports median elapsed time per parse or four-document sanitization pass. The last column uses the median of the eight within-pair ratios. Each process verified serialization before the timed interval. The test alternated first position, discarded the first pair and retained eight fresh process pairs per workload. DOM runs timed 200 parses after ten warm-ups. Export runs timed twelve four-document passes. The prototype was slower in all forty measured pairs. [Mac output hashes, elapsed times and process peak RSS](evidence/mac.json)
 
@@ -34,6 +34,8 @@ On ARM64 macOS, the table reports median elapsed time per parse or four-document
 On Linux x86-64, six held-out Climate and Wikipedia 100 article bodies produced the same DOM in both arms. The earlier prototype took 29.8–35.2% longer with the app’s chunking rule and 18.6–25.7% longer with whole-document input, using the median of pairs two through nine after discarding the first alternating pair. The Linux study predates the correction to shared reservation. Its checked scanner used the same x86 scan width as the final one. The receipt records its exact source identities and held-out archive paths. [Linux samples](evidence/linux-prior.json) · [Source and archive identities](evidence/mac.json)
 
 ## Repeat the comparison
+
+Use checkout `4c884281d8333f87d6d9e676da90f947bee9495a` to reproduce the original two-arm implementation and workload. Use the current research checkout for the three-way comparison below.
 
 The standalone crate has no third-party dependencies. From the app checkout, run these checks.
 
@@ -52,3 +54,37 @@ python3 experiments/html-storage/check.py . sample-run climate.html nollywood.ht
 ```
 
 The checker compares the caller’s article bodies and four capture files to the published Tendril control and records all input and output hashes. Matching the input identities in the Mac receipt reproduces the recorded corpus. Timing and process memory vary with host load.
+
+## Inlining experiment
+
+Twenty-two inline hints allow the optimizer to see the existing small storage operations across crate boundaries. Checked ranges, shared reservations, mutation, UTF-8 decoding and the crate's unsafe-code prohibition retain their earlier implementations. The new harness and synthetic workload are GPL-3.0-or-later and remain outside the MIT/Apache-licensed storage crate.
+
+On an Apple M1 Ultra, the hinted implementation improved every measured article and export triplet relative to the preceding safe prototype. Published Tendril remained faster on all five application workloads. The percentages below use the median of twelve within-triplet elapsed-time ratios. [Raw observations, executable and input hashes, CPU, peak RSS and output checks](evidence/mac-inline.json)
+
+| Workload | Hints vs prior safe | Hints vs published |
+|---|---:|---:|
+| Climate article | −9.6% | +12.7% |
+| Nollywood article | −10.4% | +11.8% |
+| Wikipedia 100 article | −10.6% | +16.5% |
+| Chinese text | −3.6% | +14.9% |
+| Bounded export of four documents | −4.1% | +7.3% |
+| Compact UTF-8 values, clones and appends | −9.1% | +44.4% |
+| Shared 12-byte views and detached appends | −7.3% | +76.1% |
+| Sliding 8 KiB buffer with retained views | +1.8% | −88.3% |
+
+Each workload discarded one initial triplet and ran the six possible process orders twice. The interval for each DOM measurement includes 200 app-sized-chunk parses after ten warm-ups for the smaller inputs. The 281,698-byte Wikipedia 100 input used ten timed parses after one warm-up. Each sanitizer process verified the four serialized outputs, then timed twelve passes over those inputs. The three synthetic checks timed 65,536 operations each, including assertions, collection handling and a final length/byte checksum. Peak RSS covers the whole child process in bytes. Process CPU includes startup, output checks and warm-ups. The table uses the more narrowly timed internal elapsed interval.
+
+Both safe builds had a 24-byte handle, compared with 16 bytes for the published build on this host. The shared-view check verifies that each view begins at the expected byte of the original, shares that address after a reservation and survives a sibling append. The sliding case retained 1,024 small views while rotating the buffer. Its median process peak RSS was 19,218,432 bytes for each safe build and 13,533,184 bytes for published storage. These measurements establish process footprint for the workloads. Heap allocation counts, whole-app preview or export latency, and physical device performance require separate measurements.
+
+All three lanes reproduced the six functional output digests from the initial experiment, covering malformed and split input, shared mutation, document and fragment parsing, bounded work and cancellation, and the complete four-document export. All five storage tests and strict Clippy passed for the hinted source.
+
+### Repeat the three-way comparison
+
+Use the Climate and Nollywood bodies and four captures described above. Extract item `A/List_of_national_parks_of_the_United_States` from `wikipedia_en_100_maxi_2024-01.zim` with archive SHA-256 `bde9d73bb1a6b959af6cf4f00ed8f6aac6cf7f4392e28a16a46cd77228b16613`. The item SHA-256 is `263ac7c377dfcbc99a2d4c2ae71418ad5a2eb4a4ed8345a03d209b6c1e937f6f`. Run from this research checkout on macOS or Linux with the app's Cargo dependencies available offline. Use new paths for the prior checkout and run directory.
+
+```sh
+git worktree add --detach ../html-storage-prior 4c884281d8333f87d6d9e676da90f947bee9495a
+python3 experiments/html-storage/compare-inline.py ../html-storage-prior inline-run climate.html nollywood.html wikipedia.html captures
+```
+
+The replay checks the storage sources, input bytes and six functional results, builds the three implementations against the same checked parser and writes `inline-run/results.json`. Its binary hashes identify the local build. Compiler version, build paths and host load can affect the results.

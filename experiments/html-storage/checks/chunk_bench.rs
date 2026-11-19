@@ -34,12 +34,13 @@ fn main() {
         parser.finish()
     };
     std::fs::write(&args[2], parse().html().as_bytes()).unwrap();
-    for _ in 0..10 {
+    let n: u128 = if source.len() >= 128 * 1024 { 10 } else { 200 };
+    for _ in 0..(n/20).max(1) {
         black_box(parse());
     }
     let t = Instant::now();
-    for _ in 0..200 {
+    for _ in 0..n {
         black_box(parse());
     }
-    println!("{}", t.elapsed().as_nanos() / 200);
+    println!("{}", t.elapsed().as_nanos() / n);
 }

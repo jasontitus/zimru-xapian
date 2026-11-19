@@ -33,15 +33,19 @@ pub mod fmt {
     impl Format for UTF8 {
         type Slice = str;
         type Buf = String;
+        #[inline]
         fn bytes(s: &str) -> &[u8] {
             s.as_bytes()
         }
+        #[inline]
         fn decode(bytes: &[u8]) -> Option<&str> {
             std::str::from_utf8(bytes).ok()
         }
+        #[inline]
         fn whole(b: &String) -> &str {
             b
         }
+        #[inline]
         fn view(s: &str, r: Range<usize>) -> Option<&str> {
             s.get(r)
         }
@@ -63,15 +67,19 @@ pub mod fmt {
     impl Format for Bytes {
         type Slice = [u8];
         type Buf = Vec<u8>;
+        #[inline]
         fn bytes(s: &[u8]) -> &[u8] {
             s
         }
+        #[inline]
         fn decode(bytes: &[u8]) -> Option<&[u8]> {
             Some(bytes)
         }
+        #[inline]
         fn whole(b: &Vec<u8>) -> &[u8] {
             b
         }
+        #[inline]
         fn view(s: &[u8], r: Range<usize>) -> Option<&[u8]> {
             s.get(r)
         }
@@ -113,6 +121,7 @@ pub enum SubtendrilError {
 }
 
 impl<F: Format> Tendril<F> {
+    #[inline]
     pub fn new() -> Self {
         Self {
             storage: Storage::Inline([0; INLINE]),
@@ -120,6 +129,7 @@ impl<F: Format> Tendril<F> {
             end: 0,
         }
     }
+    #[inline]
     pub fn from_slice(s: &F::Slice) -> Self {
         let b = F::bytes(s);
         let end = u32::try_from(b.len()).expect("tendril length overflow");
@@ -148,6 +158,7 @@ impl<F: Format> Tendril<F> {
         x.reserve(n);
         x
     }
+    #[inline]
     pub fn len32(&self) -> u32 {
         self.end - self.start
     }
@@ -169,6 +180,7 @@ impl<F: Format> Tendril<F> {
             Storage::Heap(_, _) => "owned",
         }
     }
+    #[inline]
     fn range(&self) -> Range<usize> {
         self.start as usize..self.end as usize
     }
@@ -215,6 +227,7 @@ impl<F: Format> Tendril<F> {
             F::reserve(Rc::get_mut(b).unwrap(), additional as usize);
         }
     }
+    #[inline]
     pub fn push_slice(&mut self, s: &F::Slice) {
         let bytes = F::bytes(s);
         if bytes.is_empty() {
@@ -343,6 +356,7 @@ impl<F: Format> Clone for Tendril<F> {
 }
 impl<F: Format> Deref for Tendril<F> {
     type Target = F::Slice;
+    #[inline]
     fn deref(&self) -> &Self::Target {
         match &self.storage {
             Storage::Inline(b) => F::decode(&b[self.range()]).unwrap(),
@@ -393,11 +407,13 @@ impl formatting::Write for StrTendril {
     }
 }
 impl From<&str> for StrTendril {
+    #[inline]
     fn from(s: &str) -> Self {
         Self::from_slice(s)
     }
 }
 impl From<String> for StrTendril {
+    #[inline]
     fn from(s: String) -> Self {
         if s.len() <= INLINE {
             return Self::from_slice(&s);
@@ -411,16 +427,19 @@ impl From<String> for StrTendril {
     }
 }
 impl From<&[u8]> for ByteTendril {
+    #[inline]
     fn from(s: &[u8]) -> Self {
         Self::from_slice(s)
     }
 }
 impl AsRef<str> for StrTendril {
+    #[inline]
     fn as_ref(&self) -> &str {
         self
     }
 }
 impl AsRef<[u8]> for ByteTendril {
+    #[inline]
     fn as_ref(&self) -> &[u8] {
         self
     }
@@ -442,12 +461,15 @@ impl SliceExt for [u8] {
     }
 }
 impl StrTendril {
+    #[inline]
     pub fn from_char(c: char) -> Self {
         Self::from_slice(c.encode_utf8(&mut [0; 4]))
     }
+    #[inline]
     pub fn push_char(&mut self, c: char) {
         self.push_slice(c.encode_utf8(&mut [0; 4]));
     }
+    #[inline]
     pub fn pop_front_char(&mut self) -> Option<char> {
         let c = self.chars().next()?;
         self.pop_front(c.len_utf8() as u32);

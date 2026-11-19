@@ -48,7 +48,7 @@ def app_consumer(app, check_limits):
     ])
 
 
-def build(app, work, lane, bounded):
+def build(app, work, lane, bounded, *, storage=None, extra_parser_bins=()):
     name = ("bounded-" if bounded else "parser-") + lane
     root = work / name
     bins = root / "src/bin"
@@ -57,14 +57,14 @@ def build(app, work, lane, bounded):
         for bin_name in ["export", "limits"]:
             (bins / (bin_name + ".rs")).write_text(app_consumer(app, bin_name == "limits"))
     else:
-        for bin_name in ["bytes", "chunk_bench", "differential", "fragment", "operations"]:
+        for bin_name in ("bytes", "chunk_bench", "differential", "fragment", "operations", *extra_parser_bins):
             shutil.copyfile(CHECKS / (bin_name + ".rs"), bins / (bin_name + ".rs"))
     patches = {}
     for crate, version in [("html5ever", "0.39.0"), ("markup5ever", "0.39.0"), ("cssparser", "0.37.0")]:
         if crate != "cssparser" or bounded:
             patches[crate] = app / "vendor" / (crate + "-" + version)
     if lane == "candidate":
-        patches["tendril"] = HERE / "tendril"
+        patches["tendril"] = storage if storage is not None else HERE / "tendril"
     manifest = '[package]\nname=' + json.dumps(name) + '\nversion="0.0.0"\nedition="2024"\n'
     manifest += '[dependencies]\n' + FEATURES + (EXTRA if bounded else 'tendril="=0.5.1"\n')
     manifest += '[patch.crates-io]\n' + ''.join(
