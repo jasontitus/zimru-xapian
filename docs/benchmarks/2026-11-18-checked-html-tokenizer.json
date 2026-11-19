@@ -1,0 +1,229 @@
+{
+  "app_base": "b2a0c8171a864351ef578861a213091e51c8fa17",
+  "variants": {
+    "control": "Published html5ever and markup5ever 0.39.0, registry checksums in src-tauri/licenses/html5ever/SOURCE.txt.",
+    "candidate": "Standalone checked crate copies, dom_query 0.28.0 with default features disabled, tendril 0.5.1. Mac measured a 16-byte constant and Linux a 32-byte constant. The app selects the same widths under target cfg. Its driver regression and the omission of the unused CPU helper on other architectures were added after measurement.",
+    "mac_tokenizer_sha256": "4e2ce6ed2d94ea4d2fe65ebcb2500736658fbc9a1c8f4c77cc002ea9c2d4bf9e",
+    "integrated_tokenizer_sha256": "ced32114915ce1664a93d4a5372c51082ca4f97f6ccb223009e2fe34f9c4f32b",
+    "checked_buffer_queue_sha256": "71f1879dffcf746b885733481b4f71a068ebd5eb26ad438e7955bb449b64c80c",
+    "linux_release_binary_sha256": {
+      "whole-control": "e9f794ebac7fb3184d362ce2252254972b00ab9eb55200de76033e8dcc803708",
+      "chunk-control": "bdc6e87937239083b0876eebca4faba5fb01dd23af525de1511fa7dab01be5fb",
+      "whole-candidate": "b8ccad9f009c0b80126aa363ea217eb0512d5a4f05aad549febed86e9527e9b4",
+      "chunk-candidate": "90d95bd29cb03a241da7d5cb302a235da3b96ccba9f4f4d9eb1c2e5fe5f73f45"
+    },
+    "linux_tokenizer_sha256": "8d63d2e049295949f8e7b5b4e14ac2851db5946b9a8c70a2d0ecf5291244cbda"
+  },
+  "sampling": {
+    "clock": "Process-local Rust Instant elapsed wall time in nanoseconds. Each normal process reads UTF-8, serializes a separate validation parse for byte comparison, warms up 10 parses, then times 200 in-memory parse-and-drop operations. Input I/O and output serialization are outside that interval.",
+    "whole": "parse_document(Document::default(), ParseOpts::default()).one(source).",
+    "chunk": "Ordinary Document sink. Remove one initial BOM, disable automatic BOM discard. Repeatedly feed up to 256 bytes using exports::html::chunk_end (formatting-tag boundary, extend through a UTF-8 character), then finish.",
+    "pair_columns": [
+      "control",
+      "candidate"
+    ],
+    "pairs": "Nine pairs per row in execution order. Control ran first in pairs 1, 3, 5, 7, 9. Exclude the first pair and take the median of the remaining eight candidate/control ratios. Output SHA-256 covers serialized HTML.",
+    "drivers_sha256": {
+      "whole": "6fd404a52153f5bcbec6ead89c524661643070c3b162628dad1f530556c92847",
+      "chunk": "ac30f66c9d41ff5338f40fd7c2b90f30ca399225943f5c56fb74dad469c78d4b"
+    },
+    "scope": "Release microbenchmarks on two hosts. The ordinary parser sink omits the application budget hooks. Native printing, mobile runtime, archive I/O, UI and process memory were not timed."
+  },
+  "hosts": {
+    "mac": "Apple Silicon, aarch64 macOS 27.2.1, rustc 1.99.1 (58cf8f9c3), LLVM 23.1.3",
+    "linux": "x86_64 Linux, rustc 1.97.1 (8bab26f4f 2026-07-14), cargo 1.97.1 (c980f4866 2026-06-30)"
+  },
+  "inputs": {
+    "climate.html": {
+      "archive": "wikipedia_en_climate_change_mini_2024-06.zim",
+      "archive_sha256": "3485a2c475a2356331f33f137ce26ed7116e62c7062d73a7773362d6dff005f4",
+      "entry_index": 17,
+      "bytes": 13395,
+      "sha256": "645f9ae6621dfde78a97382b79a6261023aace2a9fee7961412557678a04ea76"
+    },
+    "nollywood.html": {
+      "archive": "wikipedia_en_nollywood_maxi_2026-10.zim",
+      "archive_sha256": "faa53e0c8ef641206867ce21f0e107d4e2aa9012e3b2263f05fe9bddf4f72aa3",
+      "entry_index": 43,
+      "bytes": 53657,
+      "sha256": "25f2fcafac543015ed87152d37a223b4c6d28f67d31e96b2eeee431234d67050"
+    },
+    "lipsum-zh.html": {
+      "crate_fixture": "html5ever-0.39.0/data/bench/lipsum-zh.html",
+      "bytes": 3611,
+      "sha256": "fafe3ed44b07f9cdb0a3ca5c010a3a73cc2534b64605593e71cc70a8cf8e27e4"
+    },
+    "medium-fragment.html": {
+      "crate_fixture": "html5ever-0.39.0/data/bench/medium-fragment.html",
+      "bytes": 4523,
+      "sha256": "d21ab12c5e538ae48af6df7ee7d7939c6fe3b2d1e36b5874a3bbb957847ddba0"
+    },
+    "strong.html": {
+      "crate_fixture": "html5ever-0.39.0/data/bench/strong.html",
+      "bytes": 1024,
+      "sha256": "5adb31981cca062df929353c60dfa1c7fb91170b5a389a13c8be6555a4cf107d"
+    },
+    "tiny-fragment.html": {
+      "crate_fixture": "html5ever-0.39.0/data/bench/tiny-fragment.html",
+      "bytes": 21,
+      "sha256": "9cc2d58507945020d4d206738c8f166a618dc15161609935ab1975b913967edf"
+    },
+    "lipsum.html": {
+      "crate_fixture": "html5ever-0.39.0/data/bench/lipsum.html",
+      "bytes": 12665,
+      "sha256": "f37900ddb4ee463b9aa3191297bc1a4320b94bc72ee630de01882b50eb241740"
+    },
+    "small-fragment.html": {
+      "crate_fixture": "html5ever-0.39.0/data/bench/small-fragment.html",
+      "bytes": 811,
+      "sha256": "3825226a96ac919b0a69ae98e8547a5430214b16e56497570d382720af2bfca3"
+    },
+    "held-climate-3.html": {
+      "archive": "wikipedia_en_climate_change_mini_2024-06.zim",
+      "archive_sha256": "3485a2c475a2356331f33f137ce26ed7116e62c7062d73a7773362d6dff005f4",
+      "article_path": "Land_cover",
+      "bytes": 4720,
+      "sha256": "087b8e53dce024959e7ec995658c3f5bc33e30f1c7af97f3da9d6c1adfc70748"
+    },
+    "held-climate-12.html": {
+      "archive": "wikipedia_en_climate_change_mini_2024-06.zim",
+      "archive_sha256": "3485a2c475a2356331f33f137ce26ed7116e62c7062d73a7773362d6dff005f4",
+      "article_path": "Nationally_determined_contribution",
+      "bytes": 6107,
+      "sha256": "b11aa1df61df0c3825014e788d1741a514b779bf6752c824a6ecf9c2d566059f"
+    },
+    "held-climate-21.html": {
+      "archive": "wikipedia_en_climate_change_mini_2024-06.zim",
+      "archive_sha256": "3485a2c475a2356331f33f137ce26ed7116e62c7062d73a7773362d6dff005f4",
+      "article_path": "Greenhouse_gas_emissions_by_Russia",
+      "bytes": 7187,
+      "sha256": "7dab17c6a2f1394b8bdc7591437511255f66317a271d71679546e8b08cec73ea"
+    },
+    "held-wiki-3.html": {
+      "archive": "wikipedia_en_100_maxi_2024-01.zim",
+      "archive_sha256": "bde9d73bb1a6b959af6cf4f00ed8f6aac6cf7f4392e28a16a46cd77228b16613",
+      "article_path": "A/Elizabeth_II",
+      "bytes": 580073,
+      "sha256": "dac495b8da217f6f4e12596768700bb6ad2568acf36a1993eee510dd9222c1b0"
+    },
+    "held-wiki-12.html": {
+      "archive": "wikipedia_en_100_maxi_2024-01.zim",
+      "archive_sha256": "bde9d73bb1a6b959af6cf4f00ed8f6aac6cf7f4392e28a16a46cd77228b16613",
+      "article_path": "A/List_of_national_parks_of_the_United_States",
+      "bytes": 281698,
+      "sha256": "263ac7c377dfcbc99a2d4c2ae71418ad5a2eb4a4ed8345a03d209b6c1e937f6f"
+    },
+    "held-wiki-21.html": {
+      "archive": "wikipedia_en_100_maxi_2024-01.zim",
+      "archive_sha256": "bde9d73bb1a6b959af6cf4f00ed8f6aac6cf7f4392e28a16a46cd77228b16613",
+      "article_path": "A/Elvis_Presley",
+      "bytes": 614430,
+      "sha256": "7c5c078c94fda61829f5d239a226d759c8951596abc938fef88a1333e6ca89d1"
+    }
+  },
+  "bounded_mac": {
+    "scope": "Four-input pass of the extracted app bounded HTML/CSS parser and live PDF sanitizer. Both arms use the app checked cssparser. Output is serialized sanitized HTML before platform printing. Measured source sections match the stated app base.",
+    "sections_sha256": {
+      "cpu_time.rs": "0e6e507bf234a11d84b20a256de8e5f955997ff1f520aa025e0c3161524eba8e",
+      "exports.rs::inline_reference": "6efb33fd423dfc25ab61dc000a6b5ae47efac55926227b936266752017ee675b",
+      "exports.rs::css helpers": "23b146b87e8aea92ff488bebd941803da6229527d1cbc2a89dc464e40b99f4d2",
+      "exports.rs::html": "79357942827a31cfd016457457cf7441ebcd2f2d7ddd35b59ada5babe1d63d9d",
+      "native_pdf/live.rs::sanitize and render helpers": "8d3b0fa31bb3f43d697d889851bc50d4dfe738bb61a17d9b39ff9f92689b557a"
+    },
+    "inputs": "Two browser bridge audio snapshots from node scripts/test-reader-live-export.mjs --audio-snapshots, then the two Wikipedia articles modeled as captured HTML with self-contained image URLs and the common Climate stylesheet. Input and output order is lexical.",
+    "input_sha256": {
+      "bridge-0.html": "9b32c31e8b65cf69aeac2d48db69b657dad0b08593f0abf09cedec7a96d1326d",
+      "bridge-1.html": "7d88c0710cb0ec79637638aa8b3b291e520ffad2d4d0ff519cca1b90a6575b97",
+      "climate.html": "48955ea19beff1f107817698a411a31a7d1059b5e03305b03b480fbe6d22ca59",
+      "nollywood.html": "dfd6d02f29119b096f42a94ea8f832176ceb49fed2f7f3e4a2e527d710ee8bc8"
+    },
+    "modeled_stylesheet_sha256": "f7dc0ccb4820fed986c31d6180d7c8bc66cb360e4607c1b17e1f399802355169",
+    "sampling": "Each fresh process loads sources and validates one complete four-input pass first. It then times 12 passes, reporting nanoseconds per four-input pass. Pair order and first-pair exclusion match the ordinary parser.",
+    "output_sha256": [
+      "45322321003b2287607a7905a632d7e2951d238d4e8056ca1e77d2f07556fb48",
+      "2318aa647d170e72110aca88cb0e3ece6851a76b3203405aa9c983e94296868a",
+      "50518de49fa46d225a490dd467a02ef1555382633ab5943e7d1b125b1d98e6ae",
+      "ec58bd7fc03165a0af2819c181129b2049e79bfabc2b6491589968670fab2ec4"
+    ]
+  },
+  "differential": {
+    "coverage": "Published versus checked in the same feed split, both exact-error settings. Compared serialized DOM, quirks, parse errors, tokens and line numbers across empty chunks, UTF-8 byte splits, CR/LF, NUL, raw/foreign/table grammar, and delimiters placed at byte offsets 0 through 64. Document and body fragment runs had 1608 and 1714 cases per implementation. The input sequence differed by host.",
+    "driver_sha256": {
+      "document": "65eb4c90ae26eb1d93a5ecd5d1732ce1b81f8daa32bd3614821e58d6367b753a",
+      "fragment": "57ec5077138dcddfc5f9dff2a2df6713415c82a1e5193c8e9b35c52bf7eae63d"
+    },
+    "extra_input_order": {
+      "mac": [
+        "climate.html",
+        "nollywood.html",
+        "edges.html"
+      ],
+      "linux": [
+        "edges.html",
+        "climate.html",
+        "nollywood.html"
+      ]
+    },
+    "edges_sha256": "ce6f83727644634c2dc0c9c268709f7b6ccbaf03184674b56c26d3214ec53085",
+    "edges_generation": "UTF-8 document begins with <!DOCTYPE html>. For each n=0..64, append a paragraph for each marker in order: <b>e</b>, &amp;, CR, CR+LF, NUL, LF, TAB, SOH, 😅, ä. Each paragraph contains <p>, n ASCII a characters, the marker, 終, LF and </p>. There is no trailing newline.",
+    "mac_document_sha256": "2b8f5522655d804fc570df0109d3c7b77284a208878b16bc0ba35de8e4ecd3ca",
+    "mac_fragment_sha256": "0f3b9ddc3c5755e876f557ab1643b9dc15645838f6ddbe1052841865b03b6394",
+    "linux_document_sha256": "b3382b00598d50ef658a373d77a6ef2fe8d3ff28f0786cb71aa3471a0731ee7d",
+    "linux_fragment_sha256": "5627a2c573e50496ba49345bd7f6a54395e8bf7e440b70766fc512899b5e29f3"
+  },
+  "row_columns": [
+    "host",
+    "mode",
+    "input",
+    "median_paired_ratio",
+    "serialized_sha256",
+    "pairs_ns"
+  ],
+  "rows": [
+    ["mac","whole","lipsum-zh.html",0.954573,"888421ab0895e0d73de3739fa965294804090e2fa8db1efb8da4e0e187813f87",[[1102,1304],[1233,1175],[1242,1173],[1206,1129],[1137,1148],[1143,1149],[1164,1113],[1245,1130],[1183,1179]]],
+    ["mac","chunk","lipsum-zh.html",1.023591,"888421ab0895e0d73de3739fa965294804090e2fa8db1efb8da4e0e187813f87",[[4858,5181],[5052,4937],[4872,4901],[4671,5095],[4798,4770],[4755,4823],[4714,4869],[4675,5047],[4838,5120]]],
+    ["mac","whole","lipsum.html",0.959797,"8c54f8aa00a6f6444ffc2e9d3d58c22d3a45e7c14b57d50fedec53bcc9df33d6",[[2015,1935],[1996,2008],[2079,2028],[2194,2012],[2160,2073],[2146,1987],[2161,2063],[2164,2133],[2168,2081]]],
+    ["mac","chunk","lipsum.html",0.99199,"8c54f8aa00a6f6444ffc2e9d3d58c22d3a45e7c14b57d50fedec53bcc9df33d6",[[14100,13720],[13617,14206],[14255,13856],[13875,13753],[13983,13686],[14164,13696],[13976,13875],[13591,14012],[13979,13965]]],
+    ["mac","whole","medium-fragment.html",1.036464,"9ba44008a3b7537b772959771f66cd10173103fbb8605a13a8860ae69b034ef4",[[43319,44627],[46020,44786],[44505,44707],[43117,44617],[42581,44205],[42961,44954],[43121,45145],[44344,44568],[42357,44499]]],
+    ["mac","chunk","medium-fragment.html",1.022748,"9ba44008a3b7537b772959771f66cd10173103fbb8605a13a8860ae69b034ef4",[[51019,52997],[50796,53293],[51621,52598],[52583,51935],[50810,52160],[53166,51978],[49337,51621],[50964,51818],[49948,51725]]],
+    ["mac","whole","small-fragment.html",1.038215,"e76510912d2e540161875d5d8ac61f20017de575abefc76aa900e40b98e8da6e",[[4995,4873],[4740,4850],[4682,4961],[4752,4836],[4714,4904],[4667,5003],[4706,4876],[4605,4990],[4800,4694]]],
+    ["mac","chunk","small-fragment.html",1.009471,"e76510912d2e540161875d5d8ac61f20017de575abefc76aa900e40b98e8da6e",[[5633,5855],[5872,5833],[5631,5865],[5643,6063],[5982,5918],[6016,5744],[5754,5818],[5755,5800],[5734,5964]]],
+    ["mac","whole","strong.html",1.032439,"1c8baad36b6a22933440240c6abf9353fda144f360496e8f082379bf6cb30ccd",[[32903,33191],[32917,34057],[33083,33452],[32579,33681],[32829,34014],[33264,33726],[32897,33390],[32687,33939],[32203,33203]]],
+    ["mac","chunk","strong.html",0.965051,"1c8baad36b6a22933440240c6abf9353fda144f360496e8f082379bf6cb30ccd",[[38097,36836],[38925,36947],[38657,37622],[38783,37507],[38661,36998],[38842,37405],[38661,37736],[38513,37838],[39047,37491]]],
+    ["mac","whole","tiny-fragment.html",1.024668,"ef9e0186d95cd8c4df9bacd5cb4ffc0c86c908813aa220c3b562d841539bbec4",[[941,943],[931,956],[934,955],[918,915],[914,942],[917,991],[947,947],[913,950],[930,927]]],
+    ["mac","chunk","tiny-fragment.html",0.989548,"ef9e0186d95cd8c4df9bacd5cb4ffc0c86c908813aa220c3b562d841539bbec4",[[959,946],[1017,930],[1044,1050],[970,936],[959,942],[939,937],[944,941],[929,934],[945,927]]],
+    ["mac","whole","climate.html",1.013812,"1929087a647c6c3924484f0cae1f19e07001504603ecfaa0f8f73489d56633b5",[[107646,110402],[108516,110271],[107371,110109],[107401,110345],[107333,108562],[108573,111255],[110810,111917],[113228,113360],[115973,115592]]],
+    ["mac","chunk","climate.html",1.037202,"1929087a647c6c3924484f0cae1f19e07001504603ecfaa0f8f73489d56633b5",[[137342,139581],[138401,140854],[135856,141645],[138354,141676],[136823,142915],[133199,139387],[136015,140290],[135756,140072],[134337,141129]]],
+    ["mac","whole","nollywood.html",1.021039,"710a8c1b0674abbc812a07fc7382005edc5c6496991bf56231f25e28fbb04d2a",[[719393,742432],[717774,731954],[719302,736307],[721154,737252],[721673,722412],[701776,735769],[697498,721000],[707151,721005],[701772,711489]]],
+    ["mac","chunk","nollywood.html",1.034978,"710a8c1b0674abbc812a07fc7382005edc5c6496991bf56231f25e28fbb04d2a",[[768500,792573],[764048,790488],[768005,791844],[751415,785398],[748961,774599],[752200,778791],[745896,791994],[751270,776089],[748108,780153]]],
+    ["mac","bounded","four",1.009857,null,[[1743559,1718166],[1725597,1754920],[1710031,1713947],[1736177,1754954],[1716618,1727142],[1710878,1783208],[1721899,1703083],[1701180,1718024],[1710902,1727691]]],
+    ["linux","whole","held-climate-12.html",1.030185,"409edecbda989f2414b1b16d8fae261d77e8ba0770e510ec0b7dcabce1274ea4",[[102618,103486],[102172,104864],[102267,104863],[102990,106339],[102753,106652],[104363,108078],[104593,104484],[102397,105249],[102328,107447]]],
+    ["linux","chunk","held-climate-12.html",1.048037,"409edecbda989f2414b1b16d8fae261d77e8ba0770e510ec0b7dcabce1274ea4",[[116279,120086],[113011,119597],[113460,118817],[112501,119967],[113444,118311],[116190,119383],[115599,123523],[113838,119400],[114830,118116]]],
+    ["linux","whole","held-climate-21.html",1.023301,"05d7c9db4f8db77dcdc5e104793c8e069511b3f047e62d5edd301ef1f9c009cb",[[108943,109626],[109545,112005],[107782,113464],[108808,108614],[109660,109768],[107285,110364],[108027,110586],[106993,110688],[107452,109914]]],
+    ["linux","chunk","held-climate-21.html",1.03351,"05d7c9db4f8db77dcdc5e104793c8e069511b3f047e62d5edd301ef1f9c009cb",[[125551,130149],[124647,128796],[123854,128070],[124402,130770],[124060,128245],[123240,127290],[123276,131767],[125879,129242],[127094,128120]]],
+    ["linux","whole","held-climate-3.html",1.011664,"87fb5bd9f88bb1fbc82986f3418bbcfa585d7ac463b71a3b0dad33c022cc85d9",[[79842,80341],[81425,81499],[84281,80923],[80006,83502],[80015,82036],[81030,82471],[80903,81832],[80293,80762],[80541,81495]]],
+    ["linux","chunk","held-climate-3.html",1.027162,"87fb5bd9f88bb1fbc82986f3418bbcfa585d7ac463b71a3b0dad33c022cc85d9",[[89717,91769],[90512,93800],[88401,93531],[90661,92242],[92048,91541],[89069,91290],[87924,93052],[90266,92873],[91342,93666]]],
+    ["linux","whole","held-wiki-12.html",1.033678,"0e4cc8f7afc12cf4be42590544be62475feaf3dd448dc88fa92b92c210446671",[[5611666,5810024],[5590081,5822512],[5615787,5759548],[5688360,5921839],[5607617,5755155],[5687191,5783677],[5612247,6239924],[5608835,6516164],[5692785,5784825]]],
+    ["linux","chunk","held-wiki-12.html",1.022041,"0e4cc8f7afc12cf4be42590544be62475feaf3dd448dc88fa92b92c210446671",[[6274550,6522331],[6248471,6380015],[6225681,6559254],[6278174,6422761],[6274389,6498500],[7263665,6572447],[6451744,6535739],[6352478,6573819],[6356166,6482706]]],
+    ["linux","whole","held-wiki-21.html",1.032611,"998b01a968d0de7d850a443309ee12a8d7559667eba8c6ff2edbc44b71e8824c",[[10094672,10401797],[10181922,10372206],[10106926,11528040],[10093662,10407812],[10136184,10536336],[10085458,10501690],[10228706,10474368],[10995439,10561739],[10170455,10517251]]],
+    ["linux","chunk","held-wiki-21.html",1.03863,"998b01a968d0de7d850a443309ee12a8d7559667eba8c6ff2edbc44b71e8824c",[[11366471,11726155],[11371179,11736660],[11490691,12516585],[11400948,11856309],[11356538,11780365],[11656388,11771863],[11411670,11753979],[11400214,12847610],[11427228,11896517]]],
+    ["linux","whole","held-wiki-3.html",1.032207,"fe6f1675a6e7a25200e82e226fc5d5d6a1cfb34e18bb2ff382514e1994d602d2",[[10093097,10471679],[10065339,10532975],[10025323,11545198],[10128604,10508379],[10159506,10348741],[10170471,10370087],[10246977,10384821],[10091921,10363577],[10014185,11393497]]],
+    ["linux","chunk","held-wiki-3.html",1.035747,"fe6f1675a6e7a25200e82e226fc5d5d6a1cfb34e18bb2ff382514e1994d602d2",[[10979424,11441876],[11079644,11465146],[11028045,11430449],[11466268,11387893],[12258331,11563584],[11095051,11649661],[11165968,11593230],[11091192,11479443],[11162890,13389217]]],
+    ["linux","whole","climate.html",1.013267,"1929087a647c6c3924484f0cae1f19e07001504603ecfaa0f8f73489d56633b5",[[206880,207364],[163920,159084],[158195,160316],[158260,158800],[158070,160145],[162018,158788],[157138,159365],[155832,161476],[156162,160708]]],
+    ["linux","chunk","climate.html",1.0263,"1929087a647c6c3924484f0cae1f19e07001504603ecfaa0f8f73489d56633b5",[[189725,194838],[190513,195359],[190731,195912],[187094,196679],[191523,192388],[191318,196003],[191602,192771],[189794,196913],[191450,199517]]],
+    ["linux","whole","lipsum-zh.html",0.862549,"888421ab0895e0d73de3739fa965294804090e2fa8db1efb8da4e0e187813f87",[[1645,1257],[1446,1564],[1698,1260],[1458,1246],[1436,1400],[1692,1277],[1390,1210],[1415,1522],[1694,1212]]],
+    ["linux","chunk","lipsum-zh.html",1.027203,"888421ab0895e0d73de3739fa965294804090e2fa8db1efb8da4e0e187813f87",[[6747,6656],[6560,6916],[6827,6593],[6686,7000],[6861,6598],[6498,6960],[6755,6653],[6466,6562],[6522,6780]]],
+    ["linux","whole","lipsum.html",0.777874,"8c54f8aa00a6f6444ffc2e9d3d58c22d3a45e7c14b57d50fedec53bcc9df33d6",[[3396,2721],[3376,2686],[3383,2390],[3102,2403],[3260,2481],[3453,2747],[3426,2676],[3385,2730],[3609,2669]]],
+    ["linux","chunk","lipsum.html",0.98518,"8c54f8aa00a6f6444ffc2e9d3d58c22d3a45e7c14b57d50fedec53bcc9df33d6",[[19839,19137],[19711,19472],[19824,19411],[19774,19267],[19905,19412],[19797,19485],[19740,19466],[19336,19488],[19143,19431]]],
+    ["linux","whole","medium-fragment.html",1.032881,"9ba44008a3b7537b772959771f66cd10173103fbb8605a13a8860ae69b034ef4",[[63738,64116],[63249,63783],[62739,64063],[61550,63490],[62149,68441],[63032,64690],[63207,66043],[62933,65088],[62401,65148]]],
+    ["linux","chunk","medium-fragment.html",1.039215,"9ba44008a3b7537b772959771f66cd10173103fbb8605a13a8860ae69b034ef4",[[72706,71463],[68448,71672],[68365,71086],[68962,71647],[68818,71177],[68636,70049],[68971,71695],[68947,71281],[68149,72459]]],
+    ["linux","whole","nollywood.html",1.037735,"710a8c1b0674abbc812a07fc7382005edc5c6496991bf56231f25e28fbb04d2a",[[969779,1002323],[966653,1006598],[975984,1112048],[974753,1001512],[966708,999718],[973961,988083],[966784,1025740],[965368,1021400],[973487,1000115]]],
+    ["linux","chunk","nollywood.html",1.037212,"710a8c1b0674abbc812a07fc7382005edc5c6496991bf56231f25e28fbb04d2a",[[1080259,1128897],[1083549,1119726],[1088472,1137323],[1080803,1127372],[1088540,1130720],[1087356,1126148],[1084177,1126605],[1108599,1128785],[1093557,1122178]]],
+    ["linux","whole","small-fragment.html",1.049953,"e76510912d2e540161875d5d8ac61f20017de575abefc76aa900e40b98e8da6e",[[6197,6629],[6173,6566],[6423,6252],[6086,6677],[6555,6260],[6077,6890],[6658,6448],[6292,6735],[6236,6462]]],
+    ["linux","chunk","small-fragment.html",1.022411,"e76510912d2e540161875d5d8ac61f20017de575abefc76aa900e40b98e8da6e",[[7997,7522],[7560,7629],[7340,7602],[7258,7736],[7332,7805],[7603,7620],[7926,7873],[7607,7616],[7484,7768]]],
+    ["linux","whole","strong.html",0.971812,"1c8baad36b6a22933440240c6abf9353fda144f360496e8f082379bf6cb30ccd",[[48662,45987],[47252,45256],[46498,45303],[48473,45285],[47194,47720],[46979,45824],[46972,45658],[47355,46010],[47615,45953]]],
+    ["linux","chunk","strong.html",1.039334,"1c8baad36b6a22933440240c6abf9353fda144f360496e8f082379bf6cb30ccd",[[51704,52786],[50815,52706],[51441,52657],[51574,53477],[51100,56116],[51649,53312],[50898,53008],[50800,53355],[51028,53287]]],
+    ["linux","whole","tiny-fragment.html",0.897989,"ef9e0186d95cd8c4df9bacd5cb4ffc0c86c908813aa220c3b562d841539bbec4",[[1089,1285],[1095,1867],[1351,1092],[1086,1125],[1367,1093],[1104,1093],[1369,1115],[1136,1115],[1375,1094]]],
+    ["linux","chunk","tiny-fragment.html",0.957927,"ef9e0186d95cd8c4df9bacd5cb4ffc0c86c908813aa220c3b562d841539bbec4",[[1110,1418],[1290,1253],[1405,1137],[1134,1147],[1418,1145],[1389,1169],[1123,1139],[1208,1141],[1160,1176]]]
+  ]
+}

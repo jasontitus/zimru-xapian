@@ -52,6 +52,7 @@
       "vendor/cssparser-0.37.0/LICENSE": "licenses/cssparser/source/LICENSE",
       "vendor/cssparser-0.37.0/README.md": "licenses/cssparser/source/README.md",
       "vendor/cssparser-0.37.0/src": "licenses/cssparser/source/src",
+      "licenses/html5ever": "licenses/html5ever",
       "licenses/voice/bzip2-turbo-rs-0BSD": "licenses/voice/bzip2-turbo-rs-0BSD",
       "licenses/zimru/LICENSE": "licenses/zimru/LICENSE",
       "licenses/zimru/zstd-rs-MIT": "licenses/zimru/zstd-rs-MIT",

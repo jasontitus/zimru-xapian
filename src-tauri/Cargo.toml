@@ -220,6 +220,9 @@ android-evaluation = ["dep:jni"]
 localswarm-profiling = []
 
 [patch.crates-io]
+# Use checked UTF-8 slices throughout the app's HTML tokenizer and its input queue.
+html5ever = { path = "vendor/html5ever-0.39.0" }
+markup5ever = { path = "vendor/markup5ever-0.39.0" }
 # Shared checked token strings across exports, PDF validation and selector consumers.
 cssparser = { path = "vendor/cssparser-0.37.0" }
 # 0.7.0 selects Linux interface binding on iOS; use Apple's indexed binding.

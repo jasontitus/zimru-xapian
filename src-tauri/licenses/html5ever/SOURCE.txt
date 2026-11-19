@@ -1,0 +1,19 @@
+The Kiwix application includes modified html5ever 0.39.0 and markup5ever
+0.39.0 from the html5ever Project Developers. Both crates are available
+under the MIT or Apache License, Version 2.0, at your option. The adjacent
+AUTHORS, COPYRIGHT, LICENSE-APACHE and LICENSE-MIT apply to both crates.
+
+Upstream revision
+https://github.com/servo/html5ever/tree/ce64836c685025a5fef0860fa2e9c80b2683e8d0
+
+Original crates.io archives (SHA-256)
+html5ever-0.39.0.crate
+46a1761807faccc9a19e86944bbf40610014066306f96edcdedc2fb714bcb7b8
+markup5ever-0.39.0.crate
+7122d987ec5f704ee56f6e5b41a7d93722e9aae27ae07cafa4036c4d3f9757de
+
+The application source includes these original archives in upstream/servo-html5ever
+and the modified crates in src-tauri/vendor. Kiwix replaced the tokenizer's
+data-state intrinsics and unchecked string slices with checked Rust operations
+and added a regression test. Both modified libraries forbid unsafe Rust in
+their own code. Their storage and other dependencies retain their own implementations.

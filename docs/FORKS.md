@@ -17,6 +17,7 @@ Surveyed 2026-11-05 against libzim `main` at ad888b4 (2026-10-19, after 9.8.2), 
 | tauri-runtime-wry | 4 lines | Yes: Linux incognito IPC | Yes, in 3.0.0-alpha.5 | Upstream PR to tauri-apps/tauri |
 | wry | ~100 lines | Apple media policy; Windows: permission persistence and accelerator forwarding (a real bug) | n/a | Keep the policy; report accelerator forwarding upstream |
 | tauri-android | ~200 lines | Yes: Activity references kept after recreation | Not re-checked against `dev` | Upstream PR to tauri-apps/tauri |
+| html5ever and markup5ever | Checked HTML data-state scan and input queue | Experimental application parser | 0.39.0 | Keep the original crates, token behavior, bounded consumer tests and platform measurements with the forks |
 | cssparser | Five changed Rust source files | Memory-safety hardening | Audited at 0.37.0 | Keep the source and fixtures with the app and compare CSS behavior on upgrades |
 | mdns-sd | ~1,900 lines | Hardening against hostile LAN packets | Partly fixed in 0.21 | Rebase onto 0.21.7, then offer the cache bounds upstream |
 | librqbit-dualstack-sockets | iOS binding and checked interface handling | Yes: does not build for iOS | Yes, in 0.7.0 | Upstream PR; trivial |
