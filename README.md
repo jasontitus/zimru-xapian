@@ -23,12 +23,19 @@ cargo build --release
 cargo test
 ```
 
-The default `writer` feature includes the reader, `Creator`, `zimrecreate`,
-and `zimwriterfs`. A reader-only build omits the writer and those two tools:
+The default build includes the reader, writer and full command suite.
+With defaults disabled, the reader library omits Rayon and the Unix
+command-line SIGPIPE helper. The serial tools `zimru`, `zimbench` and
+`zimsplit` still build:
 
 ```sh
 cargo build --release --no-default-features
 ```
+
+Add `--features cli` for `zimcheck` and `zimdump` without the writer.
+Library users can select `parallel` for Rayon iterators independently.
+The `writer` feature provides `Creator`, `zimrecreate` and
+`zimwriterfs` and enables `parallel`.
 
 Build the optional C API and generated header with:
 
@@ -139,7 +146,7 @@ blob alive for the lifetime of the borrow. `bytes()`/`to_vec()` deliberately
 copy. A blob reader reads an already materialized cluster; it is not a
 streaming decompressor.
 
-For parallel workloads, `par_iter_by_path()` scans entries and
+With `parallel` enabled, `par_iter_by_path()` scans entries and
 `par_clusters()` processes clusters. Propagate errors rather than silently
 using `filter_map(Result::ok)` in validation code. The generated API docs
 contain the complete method contracts:
@@ -248,6 +255,7 @@ cargo fmt --all -- --check
 cargo clippy --all-targets --all-features -- -D warnings
 cargo test
 cargo test --no-default-features --lib --tests
+cargo test --no-default-features --features cli --lib --tests
 cargo build --all-features
 cargo test --all-features
 cargo build --release --all-features

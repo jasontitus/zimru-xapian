@@ -7,7 +7,7 @@
 //! builds these tests have no binary to invoke and would hard-fail
 //! on `Command::new` rather than at the assertion level.
 
-#![cfg(feature = "writer")]
+#![cfg(all(feature = "writer", feature = "cli"))]
 
 use std::path::PathBuf;
 use std::process::Command;

@@ -1,3 +1,5 @@
+#![cfg(feature = "cli")]
+
 //! Original fixtures built directly from the public ZIM format layout.
 use std::fs;
 use std::path::{Path, PathBuf};

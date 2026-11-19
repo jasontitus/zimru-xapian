@@ -50,8 +50,17 @@ jobs:
         run: |
           test ! -f target/release/zimrecreate || (echo "writer binary leaked into reader-only build" && exit 1)
           test ! -f target/release/zimwriterfs || (echo "writer binary leaked into reader-only build" && exit 1)
+      - name: confirm serial reader dependency graph
+        run: |
+          graph="$(cargo tree --locked --no-default-features --edges normal --prefix none)"
+          if grep -E '^(rayon|rayon-core|crossbeam-deque|crossbeam-epoch|crossbeam-utils|sigpipe) v' <<< "$graph"; then
+            echo "parallel or CLI dependency leaked into the serial reader" >&2
+            exit 1
+          fi
       - name: cargo test (reader-only)
-        run: cargo test --release --no-default-features --lib --tests
+        run: cargo test --release --locked --no-default-features --lib --tests
+      - name: cargo test (reader and CLI)
+        run: cargo test --release --locked --no-default-features --features cli --lib --tests
 
   clippy:
     name: Clippy

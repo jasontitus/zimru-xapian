@@ -49,12 +49,15 @@
 //! // Prefix range iteration via binary search:
 //! for e in a.by_prefix(b'C', "images/") { let e = e?; /* … */ }
 //!
-//! // Parallel cluster scan (rayon):
+//! // Parallel cluster scan with the `parallel` feature:
+//! # #[cfg(feature = "parallel")]
+//! # {
 //! let per_cluster: Vec<u64> = a.par_clusters(|_i, c| -> u64 {
 //!     (0..c.blob_count()).filter_map(|i| c.blob(i).ok())
 //!         .map(|b| b.len() as u64).sum()
 //! })?;
 //! let total: u64 = per_cluster.into_iter().sum();
+//! # }
 //! # Ok::<(), zimru::Error>(())
 //! ```
 //!

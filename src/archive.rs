@@ -21,6 +21,7 @@ mod cache;
 use cache::Cache;
 #[cfg(feature = "legacy-mmap")]
 use memmap2::Mmap;
+#[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
 use crate::cluster::{Cluster, RawOffsets};
@@ -1191,6 +1192,7 @@ impl Archive {
     /// (e.g. counting redirects by namespace). When the inner closure needs
     /// blob content, prefer [`Archive::par_clusters`] instead — it
     /// decompresses each cluster exactly once, which is usually much faster.
+    #[cfg(feature = "parallel")]
     pub fn par_iter_by_path(&self) -> impl ParallelIterator<Item = Result<Entry>> + '_ {
         let n = self.core.header.entry_count;
         (0..n)
@@ -1207,6 +1209,7 @@ impl Archive {
     ///
     /// The closure receives `(cluster_index, cluster)` and returns a `T`
     /// per cluster. Results come back in cluster-index order.
+    #[cfg(feature = "parallel")]
     pub fn par_clusters<T, F>(&self, f: F) -> Result<Vec<T>>
     where
         T: Send,

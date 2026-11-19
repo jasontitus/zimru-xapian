@@ -1,4 +1,4 @@
-#![cfg(feature = "writer")]
+#![cfg(all(feature = "writer", feature = "cli"))]
 //! End-to-end test for `zimdump analyze`. Builds a small ZIM through
 //! `zimru::writer::Creator`, runs the `zimdump analyze` binary on it, and:
 //!

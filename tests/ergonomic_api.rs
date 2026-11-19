@@ -371,6 +371,7 @@ fn by_prefix_binary_searches_for_start() {
     let _ = std::fs::remove_file(p);
 }
 
+#[cfg(feature = "parallel")]
 #[test]
 fn par_iter_by_path_yields_every_entry() {
     use rayon::prelude::*;
@@ -386,6 +387,7 @@ fn par_iter_by_path_yields_every_entry() {
     let _ = std::fs::remove_file(p);
 }
 
+#[cfg(feature = "parallel")]
 #[test]
 fn par_clusters_visits_each_cluster_once() {
     let z = build_test_zim();
