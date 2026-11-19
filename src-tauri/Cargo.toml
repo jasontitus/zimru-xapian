@@ -65,7 +65,7 @@ html5ever = "0.39.0"
 cssparser = "0.37.0"
 librqbit = { version = "9.0.1", default-features = false, features = ["rust-tls"] }
 zimfile-xapian = { git = "https://github.com/jasontitus/zimru-xapian.git", rev = "380d84d7bb4ba9f30144462fd6bb18e932493fc0" }
-zimru = { git = "https://github.com/jasontitus/zimru-xapian.git", rev = "ff8b0ab5e561b0019151d6d614131f59920ff2ee", default-features = false }
+zimru = { git = "https://github.com/jasontitus/zimru-xapian.git", rev = "1c0f5e3a8d748bf7304588e7db73022555323561", default-features = false }
 cap-std = "4"
 same-file = "1"
 cap-fs-ext = "4"
@@ -110,6 +110,11 @@ tar = "0.4"
 # without it, Apple Silicon and ARM phones always use the software compressor.
 # Not on Windows ARM64: sha2-asm's AArch64 code is GNU assembly, which MSVC
 # cannot build; Windows ARM64 uses the portable compressor.
+# Retaining decoded buffers improved these release-reader workloads. Android
+# uses the default inline storage while its emulator results remain mixed.
+[target.'cfg(any(target_os = "linux", target_os = "macos", target_os = "ios"))'.dependencies]
+zimru = { git = "https://github.com/jasontitus/zimru-xapian.git", rev = "1c0f5e3a8d748bf7304588e7db73022555323561", default-features = false, features = ["retained-cluster-buffers"] }
+
 [target.'cfg(all(target_arch = "aarch64", not(target_os = "windows")))'.dependencies]
 sha2 = { version = "0.10", features = ["asm"] }
 
