@@ -71,11 +71,13 @@ jobs:
           sudo apt-get install -y build-essential pkg-config \
             libssl-dev \
             libgtk-3-dev libwebkit2gtk-4.1-dev libayatana-appindicator3-dev \
-            librsvg2-dev patchelf file libfuse2t64 xvfb libasound2-dev
+            librsvg2-dev patchelf file libfuse2t64 xvfb libasound2-dev squashfs-tools
       - name: Build frontend assets embedded by the native crate
         run: |
           npm ci
           npm run build
+      - name: Check Linux package input handling
+        run: python3 scripts/test-linux-appimage.py
       - name: Build MCP sidecar required by Tauri resource resolution
         run: npm run build:mcp
       - name: Clippy with warnings as errors
@@ -88,7 +90,7 @@ jobs:
         env:
           KIWIX_UPDATER_PUBLIC_KEY: ${{ vars.KIWIX_UPDATER_PUBLIC_KEY }}
         run: node scripts/stage-update-release.mjs --configure
-      - name: Build self-contained AppImage
+      - name: Build system-runtime AppImage
         # Pushes run clippy and tests only; packaging is reserved for
         # scheduled and manual runs so ordinary commits do not pay for it.
         if: github.event_name != 'push'
@@ -107,6 +109,7 @@ jobs:
         run: |
           for image in src-tauri/target/release/bundle/appimage/*.AppImage; do
             image=$(realpath "$image")
+            python3 scripts/linux-appimage.py verify "$image"
             extracted=$(mktemp -d "$RUNNER_TEMP/kiwix-appimage-XXXXXX")
             (cd "$extracted" && "$image" --appimage-extract > /dev/null)
             node scripts/check-archive-libraries.mjs "$extracted/squashfs-root" --elf
@@ -393,6 +396,8 @@ jobs:
           pattern: release-*
           path: release/
           merge-multiple: true
+      - name: Install the Linux package inspector
+        run: sudo apt-get update && sudo apt-get install -y squashfs-tools
       - name: Verify signatures and version and assemble manifest
         env:
           KIWIX_UPDATER_PUBLIC_KEY: ${{ vars.KIWIX_UPDATER_PUBLIC_KEY }}

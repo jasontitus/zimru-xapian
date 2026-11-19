@@ -751,13 +751,30 @@ On Ubuntu 24.04, from the repository root:
 sudo apt-get update
 sudo apt-get install -y build-essential pkg-config libssl-dev \
   libgtk-3-dev libwebkit2gtk-4.1-dev libayatana-appindicator3-dev \
-  librsvg2-dev patchelf file libfuse2t64 libasound2-dev
+  librsvg2-dev patchelf file libfuse2t64 libasound2-dev squashfs-tools
 npm ci
 npm run build:mcp   # externalBin: src-tauri/binaries/kiwix-mcp-<host triple>
-APPIMAGE_EXTRACT_AND_RUN=1 npm run tauri -- build --bundles appimage
+npm run tauri -- build --bundles appimage
 ```
 
-CI examines the extracted AppImage for native archive library filenames and inspects ELF dynamic dependencies with `readelf`. The generated AppImage is unsigned and needs the clean-machine checks below.
+The supported x86-64 AppImage targets Ubuntu 24.04. Install `libasound2t64`, `libwebkit2gtk-4.1-0` and `libgtk-3-0t64` on the desktop. For the tested WebM/VP8 playback path install `gstreamer1.0-plugins-base` and `gstreamer1.0-plugins-good`. Other formats depend on installed codecs. The launcher checks the executable’s host library dependencies before opening the app. GTK/WebKit translations and media plugins come from the system. The application’s own translations are built into its frontend.
+
+This research AppImage has a release blocker in its bundled upstream bootstrap. In extract-and-run mode the bootstrap accepts a pre-existing extraction directory and may reuse files without checking their ownership or contents before launch. Concurrent launches under different accounts reproduced an extraction failure. Use the Debian package for distribution while bootstrap hardening is pending. The regular FUSE route mounts the image and requires separate runtime validation.
+
+For isolated no-FUSE testing, give each invocation a fresh private temporary directory. Run this example from the directory containing the AppImage, supplying its filename.
+
+```sh
+(
+  set -eu
+  image_tmp=$(mktemp -d)
+  trap 'rmdir "$image_tmp"' EXIT
+  TMPDIR="$image_tmp" ./org.kiwix.workbench_0.1.0_amd64.AppImage --appimage-extract-and-run
+)
+```
+
+The npm build command produces a Debian staging package and assembles the AppImage from its application, MCP relay, desktop integration, icons and configured resources. To build just the Debian package, use `npm run tauri -- build --bundles deb`. The type-2 loader is pinned in `upstream/appimage` and mounts or extracts the SquashFS image. Its statically linked native dependencies remain part of the package. Its source, build information, dependency notices and FUSE source archives accompany the existing reader licenses under `usr/lib/org.kiwix.workbench/licenses`. The image supplies no WebKit, JavaScriptCore, GTK or GStreamer libraries, helpers, or plugins. The host supplies the renderer that handles archive content.
+
+CI inspects the final image layout, content and application bundle marker before upload. Release staging audits the final AppImage before signing it. Manifest assembly authenticates downloaded bytes before auditing them. Use the npm wrapper for the supported image. An explicit raw upstream Tauri CLI AppImage uses a different layout and fails the release audit. The workflow does not publish a Flatpak.
 
 The Linux runtime/GeoClue application identifier is `org.kiwix.workbench`. Tauri's [desktop generator](https://github.com/tauri-apps/tauri/blob/dev/crates/tauri-bundler/src/bundle/linux/freedesktop/mod.rs) names the desktop file after `productName`, not the bundle identifier or the desktop template. Therefore `src-tauri/tauri.linux.conf.json` sets the Linux-only packaging product name to `org.kiwix.workbench`, while `linux/main.desktop` keeps the displayed name `Kiwix`, sets the matching startup class, accepts associated local archive paths and `kiwix://` links through `%U`, and declares `x-scheme-handler/kiwix`. AppImage generation uses the Debian desktop template, so both Debian/AppImage and RPM template settings are supplied. macOS/Windows keep their `Kiwix` product name. The resulting Linux artifact filename starts with `org.kiwix.workbench`, and its installed desktop entry is `org.kiwix.workbench.desktop`. The workflow checks the packaged AppImage's `usr/share/applications/org.kiwix.workbench.desktop` before upload and fails on disagreement. A matching filename is necessary, not sufficient: GeoClue availability, desktop integration, and the user's location permission still need runtime validation.
 
@@ -826,7 +843,7 @@ node scripts/make-update-manifest.mjs \
   --base-url https://updates.example.org/kiwix/0.1.1/ \
   --artifact darwin-aarch64-app=Kiwix.app \
   --artifact windows-x86_64-nsis=Kiwix_0.1.1_x64-setup.nsis.zip \
-  --artifact linux-x86_64-appimage=Kiwix_0.1.1_amd64.AppImage.tar.gz \
+  --artifact linux-x86_64-appimage=org.kiwix.workbench_0.1.1_amd64.AppImage \
   --out dist/update.json
 ```
 
@@ -857,7 +874,7 @@ Before publication, record and perform the following on clean machines/VMs witho
 
 1. Verify the downloaded archive/installer checksum before extraction/install. A checksum detects corruption, not publisher identity; authenticate the release channel separately.
 2. On macOS, inspect each image with `otool -L` and `otool -l` (no external SDK or Cellar references), inspect `LC_BUILD_VERSION`/minimum deployment versions for every slice, and run `codesign --verify --deep --strict --verbose=2 Kiwix.app`. For a real release also run `spctl --assess --type execute --verbose=2 Kiwix.app` and `xcrun stapler validate Kiwix.app`. Test the downloaded, quarantined app on the oldest claimed macOS with no Homebrew installed. Do not turn off Gatekeeper or remove quarantine and call that release validation.
-3. On Linux, copy only the AppImage to a fresh supported Ubuntu machine without the SDK, then launch it with the SDK's `LD_LIBRARY_PATH`/`PKG_CONFIG_PATH` unset. Use `--appimage-extract-and-run` if testing the no-FUSE mode. Inspect extracted ELF dependencies for unresolved libraries and check the package for obsolete native libzim/Xapian dependencies. Confirm desktop integration retains `org.kiwix.workbench.desktop`, then exercise location permission with GeoClue available; report unsupported/service-denied states honestly instead of treating a filename check as a successful location fix.
+3. On Linux, copy only the AppImage to a fresh supported Ubuntu machine without the SDK, then launch it with the SDK's `LD_LIBRARY_PATH`/`PKG_CONFIG_PATH` unset. For no-FUSE testing, use the private temporary directory procedure above. Inspect extracted ELF dependencies for unresolved libraries and check the package for obsolete native libzim/Xapian dependencies. Confirm desktop integration retains `org.kiwix.workbench.desktop`, then exercise location permission with GeoClue available; report unsupported/service-denied states honestly instead of treating a filename check as a successful location fix.
 4. On Windows, install in a fresh standard-user VM without the SDK directories on `PATH`. Check DLL resolution and WebView2 installation behavior, and verify the installer and executable Authenticode signatures for a signed channel. Uninstall/reinstall and verify that the installed archive association opens the application.
 5. On every target: launch from the platform launcher; open a known local ZIM through the dialog and file association; read text/images, navigate links, and run full-text search. Exercise a split ZIM, persistence after restart, library import/removal, download pause/resume, export, window close/reopen, and the actual offline behavior. For StreetZim, fetch the real HTTPS catalog, assemble a known recipe, validate/open the completed archive, restart and reopen the saved map, then demonstrate local-part reuse and offline reopening with networking disabled. Run those map checks on Windows, macOS, and Linux; a successful local fixture on one OS is not evidence for the other two. Record app and locked reader versions, OS/architecture, and results. Packaging success alone does not verify these behaviors.
 6. Publish corresponding source and dependency license notices/source offers as required by GPL and bundled dependency licenses. SDK provenance metadata alone is not a complete license-compliance package.

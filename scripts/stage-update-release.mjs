@@ -4,7 +4,7 @@
 import { readFile, readdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { generate, validateVersion, validateBaseUrl } from "./make-update-manifest.mjs";
+import { generate, verifyReleaseArtifact, validateVersion, validateBaseUrl } from "./make-update-manifest.mjs";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 const targets = ["darwin-aarch64-app", "darwin-x86_64-app", "windows-x86_64-nsis", "linux-x86_64-appimage"];
@@ -85,6 +85,7 @@ async function main() {
     out: path.join(root, mode === "--manifest" ? "published/update.json" : `release/${target}.json`),
     stageDir: path.join(root, mode === "--manifest" ? "published" : "release"),
     artifacts, publicKey: settings.publicKey, sign: mode === "--stage",
+    verifyArtifact: verifyReleaseArtifact,
     privateKey: process.env.TAURI_SIGNING_PRIVATE_KEY,
     privateKeyPassword: process.env.TAURI_SIGNING_PRIVATE_KEY_PASSWORD ?? "",
     notesText: `Kiwix ${settings.version}. See the release page for release notes.`,

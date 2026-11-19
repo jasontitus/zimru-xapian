@@ -1,0 +1,20 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-3.0-or-later
+set -eu
+app="${APPDIR:?Start Kiwix through its AppImage}/usr/bin/kiwix-workbench"
+if ! /lib64/ld-linux-x86-64.so.2 --list "$app" >/dev/null; then
+  message='Kiwix requires the Ubuntu 24.04 x86-64 desktop libraries. Install libasound2t64, libwebkit2gtk-4.1-0 and libgtk-3-0t64 with your package manager, then open Kiwix again. For video, install gstreamer1.0-plugins-base and gstreamer1.0-plugins-good.'
+  printf '%s\n' "$message" >&2
+  for arg do
+    [ "$arg" != '--headless' ] || exit 127
+  done
+  if [ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]; then
+    if command -v zenity >/dev/null 2>&1; then
+      zenity --error --title=Kiwix --text="$message" || :
+    elif command -v xmessage >/dev/null 2>&1; then
+      xmessage -center -title Kiwix "$message" || :
+    fi
+  fi
+  exit 127
+fi
+exec "$app" "$@"

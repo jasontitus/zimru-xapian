@@ -92,7 +92,7 @@ initial correctly configured distribution before they can use that channel.
      The staged updater filename includes target, version and basename, with
      `Kiwix.app` at the tarball root. Both macOS architectures retain distinct bytes.
    - Windows: protected workflow signs NSIS with the provisioned certificate.
-   - Linux: protected workflow stages the AppImage.
+   - Linux: protected workflow audits the system-runtime AppImage and signs its exact bytes.
 3. **Sign each updater artifact with its version.**
    ```sh
    npx tauri signer sign --private-key-path updater.key \
@@ -108,7 +108,7 @@ initial correctly configured distribution before they can use that channel.
      --base-url https://updates.example.org/kiwix/0.1.1/ \
      --artifact darwin-aarch64-app=Kiwix.app \
      --artifact windows-x86_64-nsis=Kiwix_0.1.1_x64-setup.exe \
-     --artifact linux-x86_64-appimage=Kiwix_0.1.1_amd64.AppImage \
+     --artifact linux-x86_64-appimage=org.kiwix.workbench_0.1.1_amd64.AppImage \
      --stage-dir dist/artifacts-0.1.1 --out dist/update.json
    ```
    Use a fresh stage directory. Duplicate targets, output/input collisions and
@@ -187,6 +187,8 @@ node scripts/update-e2e.mjs \
   --app1 /tmp/Kiwix-0.1.1.app \
   --version0 0.1.0 --version1 0.1.1 --keep
 ```
+
+On Ubuntu 24.04 x86-64, pass two system-runtime AppImages as `--app0` and `--app1` with their actual versions. The harness audits both images before launching them and signs the newer image with a temporary key. The native test installs it into a copy of the older image, compares the installed bytes and launches the replacement with `--version`. The test server serves only public artifacts and deletes its private key after the run.
 
 The Rust test performs:
 

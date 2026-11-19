@@ -1098,8 +1098,11 @@ mod tests {
         let app = mock_loopback_app(&[&manifest, &tampered_manifest]);
         let handle = app.handle().clone();
 
-        let fake_app = workdir.join("installed").join("Kiwix.app");
-        assert!(fake_app.join("Contents/MacOS/Kiwix").is_file(),
+        #[cfg(target_os = "linux")]
+        let executable = workdir.join("installed/Kiwix.AppImage");
+        #[cfg(not(target_os = "linux"))]
+        let executable = workdir.join("installed/Kiwix.app/Contents/MacOS/Kiwix");
+        assert!(executable.is_file(),
             "harness must copy the actual old application before installation");
 
         let updater = handle
@@ -1108,7 +1111,7 @@ mod tests {
             .unwrap()
             .pubkey(pubkey.clone())
             .target(target.clone())
-            .executable_path(fake_app.join("Contents/MacOS/Kiwix"))
+            .executable_path(executable.clone())
             .build()
             .unwrap();
 
@@ -1137,11 +1140,23 @@ mod tests {
             assert!(chunks > 0, "progress callbacks fired");
             assert_eq!(downloaded, bytes.len() as u64);
             update.install(&bytes).expect("signed artifact installs");
-            let installed = std::fs::read(fake_app.join("Contents/Info.plist")).unwrap();
-            assert!(
-                String::from_utf8_lossy(&installed).contains(&expected_version),
-                "the installed bundle reports version {expected_version}"
-            );
+            #[cfg(target_os = "linux")]
+            {
+                assert_eq!(std::fs::read(&executable).unwrap().as_slice(), bytes.as_slice());
+                let version = std::process::Command::new(&executable)
+                    .env("APPIMAGE_EXTRACT_AND_RUN", "1")
+                    .arg("--version")
+                    .output()
+                    .expect("launch the installed image");
+                assert!(version.status.success());
+                assert_eq!(String::from_utf8_lossy(&version.stdout).trim(), format!("Kiwix Rust {expected_version}"));
+            }
+            #[cfg(not(target_os = "linux"))]
+            {
+                let installed = std::fs::read(workdir.join("installed/Kiwix.app/Contents/Info.plist")).unwrap();
+                assert!(String::from_utf8_lossy(&installed).contains(&expected_version),
+                    "the installed bundle reports version {expected_version}");
+            }
 
             let tampered = handle
                 .updater_builder()
@@ -1149,7 +1164,7 @@ mod tests {
                 .unwrap()
                 .pubkey(pubkey)
                 .target(target)
-                .executable_path(fake_app.join("Contents/MacOS/Kiwix"))
+                .executable_path(executable.clone())
                 .build()
                 .unwrap()
                 .check()

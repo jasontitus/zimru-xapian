@@ -438,3 +438,31 @@ test("artifact URLs preserve filename bytes rather than URL query or fragment sy
   assert.equal(url.search, "");
   assert.equal(url.hash, "");
 });
+
+test("downloaded package bytes are authenticated before inspection and inspected in private staging", async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), "kiwix-verified-package-"));
+  try {
+    const bytes = Buffer.from("owned package fixture");
+    const { signature, publicKey } = signingFixture(bytes);
+    const file = path.join(directory, "fixture.AppImage");
+    await writeFile(file, Buffer.from("changed package fixture"));
+    await writeFile(file + ".sig", signature);
+    let count = 0;
+    const options = optionsFor(directory, [{ target: "linux-x86_64-appimage", file }], {
+      publicKey,
+      async verifyArtifact(target, staged) {
+        count++;
+        assert.equal(target, "linux-x86_64-appimage");
+        assert.notEqual(staged, file);
+        assert.deepEqual(await readFile(staged), bytes);
+      },
+    });
+    await assert.rejects(generate(options), /signature|authentic/i);
+    assert.equal(count, 0);
+    await writeFile(file, bytes);
+    await generate(options);
+    assert.equal(count, 1);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});

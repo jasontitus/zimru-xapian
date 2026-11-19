@@ -179,3 +179,7 @@ Upstream's library manifest also sets an application-wide `networkSecurityConfig
 9. mdns-sd: cache bounds, after rebasing onto 0.21.7.
 
 Each fork that lands upstream removes a re-application step from every future upgrade. Moving reading to zimru (above) would retire the libzim items entirely.
+
+## Linux AppImage runtime
+
+The x86-64 AppImage uses the upstream type-2 runtime at `fedfad51acc2860b2916a1eef32ba4a500ff31ef`. The archived source and bootstrap binary hashes, linked components and licensing material are recorded in [the runtime provenance](../upstream/appimage/SOURCE.txt). The package launcher runs the application against the installed Linux desktop stack. [Linux package instructions](PACKAGING.md#linux-x86_64-commands)

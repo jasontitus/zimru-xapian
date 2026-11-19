@@ -22,10 +22,10 @@
     "test:speech-preferences": "node --test scripts/test-speech-preferences.mjs",
     "update:manifest": "node scripts/make-update-manifest.mjs",
     "docs:errors": "node scripts/generate-error-docs.mjs",
-    "tauri": "tauri",
+    "tauri": "node scripts/tauri-cli.mjs",
     "iphone": "python3 scripts/iphone.py",
     "desktop": "tauri dev",
-    "bundle": "tauri build",
+    "bundle": "node scripts/tauri-cli.mjs build",
     "build:mcp": "node scripts/build-mcp.mjs",
     "bundle:macos": "npm run build:mcp && tauri build --bundles app && node scripts/bundle-macos.mjs"
   },

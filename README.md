@@ -15,7 +15,7 @@ Get the latest build from the **[releases page](https://github.com/jasontitus/ki
 | macOS 13.3+ (Apple silicon) | `.dmg` |
 | Windows 10/11 on Intel or AMD (x64) | `Kiwix_…_x64-setup.exe` |
 | Windows 11 on ARM (Snapdragon and other ARM64 PCs) | `Kiwix_…_arm64-setup.exe` (test build) |
-| Linux (x86_64) | `.AppImage` or `.flatpak` |
+| Ubuntu 24.04 (x86_64) | `.AppImage` with system WebKitGTK 4.1 |
 | iPhone / iPad | Source build; sign with your own Apple developer account |
 | Android (ARM64 / 32-bit ARM) | `.apk` |
 
@@ -140,7 +140,7 @@ Open a ZIM and Kiwix gives you a fast, quiet reader: a searchable library, tabs 
 | [Agent connector](docs/AGENT-CONNECTOR.md) | Setting up AI assistants with your offline library, and what they can see |
 | [Platform integrations](docs/PLATFORM-INTEGRATIONS.md) | Design of the connector, Look up, on-device AI and Windows on ARM |
 | [Architecture](docs/ARCHITECTURE.md) | Native services, security boundaries, and data flow |
-| [Packaging](docs/PACKAGING.md) | SDK provenance, signing, AppImage/Flatpak, Windows ARM64, mobile and desktop builds |
+| [Packaging](docs/PACKAGING.md) | SDK provenance, signing, AppImage and Debian packages, Windows ARM64, mobile and desktop builds |
 | [Reliability](docs/RELIABILITY.md) | Runtime acceptance, failure handling, and known gaps |
 | [Changelog](CHANGELOG.md) | Release history and verification notes |
 
@@ -155,7 +155,7 @@ npm run desktop        # native Tauri app
 npm run bundle:macos   # macOS app + dependency finalization
 ```
 
-Linux AppImage/Flatpak, Windows (including ARM64), and mobile build commands are documented in [Packaging](docs/PACKAGING.md). See the packaging guide before publishing artifacts.
+Linux AppImage and Debian packages, Windows (including ARM64), and mobile build commands are documented in [Packaging](docs/PACKAGING.md). See the packaging guide before publishing artifacts.
 
 Changes must pass the independent review gate in [AGENTS.md](AGENTS.md). A successful compile is not a substitute for runtime evidence.
 

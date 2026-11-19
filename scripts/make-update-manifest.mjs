@@ -26,7 +26,7 @@ import {
 } from "node:fs/promises";
 import { createRequire } from "node:module";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const VERSION_PATTERN = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$/;
 const MAX_VERSION_COMPONENT = 18446744073709551615n;
@@ -445,6 +445,7 @@ async function prepareArtifact(plan, options, scratch) {
   }
   let signature = plan.signature;
   if (options.sign) {
+    if (options.verifyArtifact) await options.verifyArtifact(plan.target, temporary);
     // Always sign these newly staged bytes; never reuse any .sig at the final
     // output path, even when a previous release generation was interrupted.
     await signArtifact(temporary, options.version, options);
@@ -453,6 +454,7 @@ async function prepareArtifact(plan, options, scratch) {
     await writeFile(`${temporary}.sig`, signature);
   }
   if (options.publicKey) await verifyArtifactFile(temporary, signature, options.publicKey, options.version);
+  if (!options.sign && options.verifyArtifact) await options.verifyArtifact(plan.target, temporary);
   return { target: plan.target, fileName: plan.fileName, signature };
 }
 
@@ -554,9 +556,16 @@ export async function generate(options) {
   }
 }
 
+export function verifyReleaseArtifact(target, file) {
+  if (target === "linux-x86_64-appimage" || target === "linux-x86_64") {
+    const checker = fileURLToPath(new URL("./linux-appimage.py", import.meta.url));
+    run("python3", [checker, "verify", file], { PATH: process.env.PATH });
+  }
+}
+
 async function main() {
   const options = parseArgs(process.argv.slice(2));
-  const result = await generate(options);
+  const result = await generate({ ...options, verifyArtifact: verifyReleaseArtifact });
   console.log(JSON.stringify({
     manifest: result.out,
     stageDir: result.stageDir,
