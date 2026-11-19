@@ -1,0 +1,17 @@
+This application uses a checked implementation of the single-threaded UTF-8
+and byte buffer interfaces from Tendril 0.5.1. Tendril is available under
+the MIT License or Apache License, Version 2.0, at your option. Both original
+license texts accompany this notice.
+
+Published API and original distribution:
+https://github.com/servo/html5ever/tree/d64dfd4c21cf2451649107ade7eaf042d95fbc5a/tendril
+https://crates.io/crates/tendril/0.5.1
+Original archive SHA-256: 5fed54709c5b3a53d09bb1c113ea4f5ceafd1e772ddcb0030a82e1d56c087b08
+The application's source distribution retains this intact archive in
+upstream/servo-html5ever/tendril-0.5.1.crate.
+
+The application-specific implementation is in src-tauri/vendor/tendril-0.5.1.
+It uses checked Rust slicing, standard-library storage and incremental UTF-8
+decoding. The reviewed source was preserved from experiments/html-storage/tendril
+at application research commit 302193b82a9b6e3ee8c0faed6830e7e5759f4f4b.
+The separate GPL application test harness is outside this crate.

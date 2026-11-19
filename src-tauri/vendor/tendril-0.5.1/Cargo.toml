@@ -1,0 +1,7 @@
+[package]
+name="tendril"
+version="0.5.1"
+edition="2024"
+license="MIT OR Apache-2.0"
+publish=false
+[dependencies]
