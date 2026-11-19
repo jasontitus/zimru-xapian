@@ -1,0 +1,844 @@
+--- a/src/runtime/runtime.c
++++ b/src/runtime/runtime.c
+@@ -401,7 +401,7 @@
+ 	return 0;
+ }
+ 
+-int appimage_print_binary(char* fname, unsigned long offset, unsigned long length) {
++int appimage_print_binary(const char* fname, unsigned long offset, unsigned long length) {
+ 	char* data;
+ 	if ((data = read_file_offset_length(fname, offset, length)) == NULL) {
+ 		return 1;
+@@ -531,13 +531,44 @@
+     exit(EXIT_EXECERROR);
+ }
+ 
+-/* Check whether directory is writable */
+-bool is_writable_directory(char* str) {
+-    if (access(str, W_OK) == 0) {
+-        return true;
+-    } else {
+-        return false;
+-    }
++/* A sticky directory protects an owned child's name even when other users can
++ * create their own entries. Validate ancestors before using the canonical path. */
++static bool trusted_directory(const char *requested, char resolved[PATH_MAX]) {
++    if (!realpath(requested, resolved)) return false;
++    for (char *next = resolved + 1; ; ++next) {
++        if (*next != '/' && *next != '\0') continue;
++        const bool last = *next == '\0';
++        *next = '\0';
++        struct stat st;
++        if (lstat(resolved, &st) != 0 || !S_ISDIR(st.st_mode) ||
++            (st.st_uid != 0 && st.st_uid != geteuid()) ||
++            ((st.st_mode & (S_IWGRP | S_IWOTH)) && !(st.st_mode & S_ISVTX))) return false;
++        if (last) return true;
++        *next = '/';
++    }
++}
++
++static void temp_directory(char resolved[PATH_MAX]) {
++    const char *base = getenv("TMPDIR");
++    if (!base || !*base) base = P_tmpdir;
++    if (*base != '/' || !trusted_directory(base, resolved))
++        die("Choose a private TMPDIR or the system sticky /tmp directory.");
++}
++
++/* Optional AppImage sidecars redirect profile state, so their names and
++ * terminal directories must be under the launching user's control. */
++static bool use_portable_directory(char *path) {
++    struct stat st;
++    if (lstat(path, &st) != 0) {
++        if (errno == ENOENT) return false;
++        die("Cannot inspect the portable directory.");
++    }
++    char resolved[PATH_MAX];
++    if (!S_ISDIR(st.st_mode) || st.st_uid != geteuid() ||
++        (st.st_mode & (S_IWGRP | S_IWOTH)) || !trusted_directory(path, resolved) ||
++        strcmp(path, resolved) != 0 || access(path, W_OK | X_OK) != 0)
++        die("Use an owned, writable portable directory without links or shared write access.");
++    return true;
+ }
+ 
+ bool startsWith(const char* pre, const char* str) {
+@@ -588,6 +619,7 @@
+ 
+ static pid_t fuse_pid;
+ static int keepalive_pipe[2];
++static int mount_anchor = -1;
+ 
+ static void*
+ write_pipe_thread(void* arg) {
+@@ -610,7 +642,12 @@
+ fuse_mounted(void) {
+     pthread_t thread;
+     fuse_pid = getpid();
+-    pthread_create(&thread, NULL, write_pipe_thread, keepalive_pipe);
++    if (pthread_create(&thread, NULL, write_pipe_thread, keepalive_pipe) != 0) {
++        close(keepalive_pipe[1]);
++        kill(fuse_pid, SIGTERM);
++    } else {
++        pthread_detach(thread);
++    }
+ }
+ 
+ char* getArg(int argc, char* argv[], char chr) {
+@@ -725,204 +762,136 @@
+         char fullpath[PATH_MAX];
+ 
+         ssize_t length = readlink(appimage_path, fullpath, sizeof(fullpath));
+-        if (length < 0) {
++        if (length < 0 || (size_t)length >= sizeof(fullpath)) {
+             fprintf(stderr, "Error getting realpath for %s\n", appimage_path);
+             exit(EXIT_FAILURE);
+         }
+         fullpath[length] = '\0';
+ 
+-        sprintf(portable_dir, "%s.%s", fullpath, name);
+-        if (!mkdir(portable_dir, S_IRWXU))
+-            fprintf(stderr, "Portable %s directory created at %s\n", name, portable_dir);
+-        else
+-            fprintf(stderr, "Error creating portable %s directory at %s: %s\n", name, portable_dir, strerror(errno));
+-
++        if (snprintf(portable_dir, sizeof(portable_dir), "%s.%s", fullpath, name) >= (int)sizeof(portable_dir)) {
++            fprintf(stderr, "Portable directory path is too long\n");
++            exit(EXIT_FAILURE);
++        }
++        char parent[PATH_MAX];
++        char *slash = strrchr(fullpath, '/');
++        if (!slash) die("Cannot identify the containing directory.");
++        *slash = '\0';
++        if (!trusted_directory(*fullpath ? fullpath : "/", parent))
++            die("Choose a trusted containing directory for the portable profile.");
++        if (mkdir(portable_dir, S_IRWXU) != 0 && errno != EEXIST) {
++            fprintf(stderr, "Cannot create portable directory %s: %s\n", portable_dir, strerror(errno));
++            exit(EXIT_EXECERROR);
++        }
++        if (!use_portable_directory(portable_dir)) die("Portable directory disappeared.");
++        fprintf(stderr, "Portable %s directory available at %s\n", name, portable_dir);
+         exit(0);
+     }
+ }
+ 
+-bool extract_appimage(const char* const appimage_path, const char* const _prefix, const char* const _pattern,
+-                      const bool overwrite, const bool verbose) {
+-    sqfs_err err = SQFS_OK;
+-    sqfs_traverse trv;
+-    sqfs fs;
+-    char prefixed_path_to_extract[1024];
+-
+-    // local copy we can modify safely
+-    // allocate 1 more byte than we would need so we can add a trailing slash if there is none yet
+-    char* prefix = malloc(strlen(_prefix) + 2);
+-    strcpy(prefix, _prefix);
+-
+-    // sanitize prefix
+-    if (prefix[strlen(prefix) - 1] != '/')
+-        strcat(prefix, "/");
+-
+-    if (access(prefix, F_OK) == -1) {
+-        if (mkdir_p(prefix) == -1) {
+-            perror("mkdir_p error");
+-            return false;
+-        }
+-    }
+-
+-    if ((err = sqfs_open_image(&fs, appimage_path, (size_t) fs_offset))) {
+-        fprintf(stderr, "Failed to open squashfs image\n");
+-        return false;
+-    };
+-
+-    // track duplicate inodes for hardlinks
+-    char** created_inode = calloc(fs.sb.inodes, sizeof(char*));
+-    if (created_inode == NULL) {
+-        fprintf(stderr, "Failed allocating memory to track hardlinks\n");
+-        return false;
+-    }
+-
+-    if ((err = sqfs_traverse_open(&trv, &fs, sqfs_inode_root(&fs)))) {
+-        fprintf(stderr, "sqfs_traverse_open error\n");
+-        free(created_inode);
+-        return false;
+-    }
+-
+-    bool rv = true;
+-
+-    while (sqfs_traverse_next(&trv, &err)) {
+-        if (!trv.dir_end) {
+-            if (_pattern == NULL || fnmatch(_pattern, trv.path, FNM_FILE_NAME | FNM_LEADING_DIR) == 0) {
+-                // fprintf(stderr, "trv.path: %s\n", trv.path);
+-                // fprintf(stderr, "sqfs_inode_id: %lu\n", trv.entry.inode);
+-                sqfs_inode inode;
+-                if (sqfs_inode_get(&fs, &inode, trv.entry.inode)) {
+-                    fprintf(stderr, "sqfs_inode_get error\n");
+-                    rv = false;
+-                    break;
+-                }
+-                // fprintf(stderr, "inode.base.inode_type: %i\n", inode.base.inode_type);
+-                // fprintf(stderr, "inode.xtra.reg.file_size: %lu\n", inode.xtra.reg.file_size);
+-                strcpy(prefixed_path_to_extract, "");
+-                strcat(strcat(prefixed_path_to_extract, prefix), trv.path);
+-
+-                if (verbose)
+-                    fprintf(stdout, "%s\n", prefixed_path_to_extract);
+-
+-                if (inode.base.inode_type == SQUASHFS_DIR_TYPE || inode.base.inode_type == SQUASHFS_LDIR_TYPE) {
+-                    // fprintf(stderr, "inode.xtra.dir.parent_inode: %ui\n", inode.xtra.dir.parent_inode);
+-                    // fprintf(stderr, "mkdir_p: %s/\n", prefixed_path_to_extract);
+-                    if (access(prefixed_path_to_extract, F_OK) == -1) {
+-                        if (mkdir_p(prefixed_path_to_extract) == -1) {
+-                            perror("mkdir_p error");
+-                            rv = false;
+-                            break;
+-                        }
+-                    }
+-                } else if (inode.base.inode_type == SQUASHFS_REG_TYPE || inode.base.inode_type == SQUASHFS_LREG_TYPE) {
+-                    // if we've already created this inode, then this is a hardlink
+-                    char* existing_path_for_inode = created_inode[inode.base.inode_number - 1];
+-                    if (existing_path_for_inode != NULL) {
+-                        unlink(prefixed_path_to_extract);
+-                        if (link(existing_path_for_inode, prefixed_path_to_extract) == -1) {
+-                            fprintf(stderr, "Couldn't create hardlink from \"%s\" to \"%s\": %s\n",
+-                                    prefixed_path_to_extract, existing_path_for_inode, strerror(errno));
+-                            rv = false;
+-                            break;
+-                        } else {
+-                            continue;
+-                        }
+-                    } else {
+-                        struct stat st;
+-                        if (!overwrite && stat(prefixed_path_to_extract, &st) == 0 &&
+-                            st.st_size == inode.xtra.reg.file_size) {
+-                            if (verbose) {
+-                                fprintf(stderr, "File exists and file size matches, skipping\n");
+-                            }
+-                            continue;
+-                        }
+-
+-                        // track the path we extract to for this inode, so that we can `link` if this inode is found again
+-                        created_inode[inode.base.inode_number - 1] = strdup(prefixed_path_to_extract);
+-                        // fprintf(stderr, "Extract to: %s\n", prefixed_path_to_extract);
+-                        if (private_sqfs_stat(&fs, &inode, &st) != 0)
+-                            die("private_sqfs_stat error");
+-
+-                        // create parent dir
+-                        char* p = strrchr(prefixed_path_to_extract, '/');
+-                        if (p) {
+-                            // set an \0 to end the split the string
+-                            *p = '\0';
+-                            mkdir_p(prefixed_path_to_extract);
+-
+-                            // restore dir seprator
+-                            *p = '/';
+-                        }
+-
+-                        // Read the file in chunks
+-                        off_t bytes_already_read = 0;
+-                        sqfs_off_t bytes_at_a_time = 64 * 1024;
+-                        FILE* f;
+-                        f = fopen(prefixed_path_to_extract, "w+");
+-                        if (f == NULL) {
+-                            perror("fopen error");
+-                            rv = false;
+-                            break;
+-                        }
+-                        while (bytes_already_read < inode.xtra.reg.file_size) {
+-                            char buf[bytes_at_a_time];
+-                            if (sqfs_read_range(&fs, &inode, (sqfs_off_t) bytes_already_read, &bytes_at_a_time, buf)) {
+-                                perror("sqfs_read_range error");
+-                                rv = false;
+-                                break;
+-                            }
+-                            // fwrite(buf, 1, bytes_at_a_time, stdout);
+-                            fwrite(buf, 1, bytes_at_a_time, f);
+-                            bytes_already_read = bytes_already_read + bytes_at_a_time;
+-                        }
+-                        fflush(f);
+-                        int fd = fileno(f);
+-                        struct timespec times[] = { st.st_atim, st.st_mtim };
+-                        if (futimens(fd, times) != 0)
+-                            fprintf(stderr, "futimens: %s\n", strerror(errno));
+-                        fclose(f);
+-                        chmod(prefixed_path_to_extract, st.st_mode);
+-                        if (!rv)
+-                            break;
+-                    }
+-                } else if (inode.base.inode_type == SQUASHFS_SYMLINK_TYPE ||
+-                           inode.base.inode_type == SQUASHFS_LSYMLINK_TYPE) {
+-                    size_t size;
+-                    sqfs_readlink(&fs, &inode, NULL, &size);
+-                    char buf[size];
+-                    int ret = sqfs_readlink(&fs, &inode, buf, &size);
+-                    if (ret != 0) {
+-                        perror("symlink error");
+-                        rv = false;
+-                        break;
+-                    }
+-                    // fprintf(stderr, "Symlink: %s to %s \n", prefixed_path_to_extract, buf);
+-                    unlink(prefixed_path_to_extract);
+-                    ret = symlink(buf, prefixed_path_to_extract);
+-                    if (ret != 0)
+-                        fprintf(stderr, "WARNING: could not create symlink\n");
+-                } else {
+-                    fprintf(stderr, "TODO: Implement inode.base.inode_type %i\n", inode.base.inode_type);
+-                }
+-                // fprintf(stderr, "\n");
+-
+-                if (!rv)
+-                    break;
++static int wait_for_child(pid_t pid) {
++    int status;
++    pid_t waited;
++    do { waited = waitpid(pid, &status, 0); } while (waited < 0 && errno == EINTR);
++    return waited == pid && WIFEXITED(status) ? WEXITSTATUS(status) : EXIT_EXECERROR;
++}
++
++/* No-FUSE launches have a supervisor while FUSE replaces the invoking process.
++ * Block cancellation before creating temporary state or forking, then forward
++ * it only to the exact, still-unreaped child. A child restores the caller's
++ * original mask before exec. */
++struct launch_signals {
++    sigset_t watch, previous;
++    struct sigaction previous_child;
++    int cancelled;
++};
++
++static void begin_supervision(struct launch_signals *signals) {
++    if (sigprocmask(SIG_BLOCK, NULL, &signals->previous) != 0)
++        die("Cannot inspect the AppImage launch signal mask.");
++    sigemptyset(&signals->watch);
++    sigaddset(&signals->watch, SIGCHLD);
++    const int cancellation[] = {SIGTERM, SIGINT, SIGHUP};
++    for (size_t i = 0; i < sizeof(cancellation) / sizeof(cancellation[0]); ++i) {
++        int event = cancellation[i];
++        struct sigaction action;
++        if (sigaction(event, NULL, &action) != 0) die("Cannot inspect launch signal handling.");
++        if (!sigismember(&signals->previous, event) && action.sa_handler != SIG_IGN)
++            sigaddset(&signals->watch, event);
++    }
++    signals->cancelled = 0;
++    struct sigaction own_children = {0};
++    own_children.sa_handler = SIG_DFL;
++    sigemptyset(&own_children.sa_mask);
++    if (sigprocmask(SIG_BLOCK, &signals->watch, &signals->previous) != 0 ||
++        sigaction(SIGCHLD, &own_children, &signals->previous_child) != 0)
++        die("Cannot prepare AppImage launch supervision.");
++}
++
++static void restore_child_mask(const struct launch_signals *signals) {
++    if (sigaction(SIGCHLD, &signals->previous_child, NULL) != 0 ||
++        sigprocmask(SIG_SETMASK, &signals->previous, NULL) != 0) _exit(EXIT_EXECERROR);
++}
++
++static int wait_for_launch(pid_t pid, struct launch_signals *signals) {
++    time_t deadline = 0;
++    for (;;) {
++        int status;
++        pid_t done = waitpid(pid, &status, WNOHANG);
++        if (done == pid) {
++            if (signals->cancelled) return 128 + signals->cancelled;
++            return WIFEXITED(status) ? WEXITSTATUS(status) : EXIT_EXECERROR;
++        }
++        if (done < 0) {
++            if (errno == EINTR) continue;
++            return EXIT_EXECERROR;
++        }
++
++        struct timespec remaining = {0};
++        if (deadline) {
++            struct timespec now;
++            if (clock_gettime(CLOCK_MONOTONIC, &now) != 0 || now.tv_sec >= deadline) {
++                kill(pid, SIGKILL);
++                wait_for_child(pid);
++                return 128 + signals->cancelled;
+             }
+-        }
+-    }
+-    for (int i = 0; i < fs.sb.inodes; i++) {
+-        free(created_inode[i]);
+-    }
+-    free(created_inode);
+-
+-    if (err != SQFS_OK) {
+-        fprintf(stderr, "sqfs_traverse_next error\n");
+-        rv = false;
+-    }
+-    sqfs_traverse_close(&trv);
+-    sqfs_fd_close(fs.fd);
+-
+-    return rv;
++            remaining.tv_sec = deadline - now.tv_sec;
++        }
++        int event = sigtimedwait(&signals->watch, NULL, deadline ? &remaining : NULL);
++        if (event == SIGTERM || event == SIGINT || event == SIGHUP) {
++            if (!signals->cancelled) {
++                struct timespec now;
++                signals->cancelled = event;
++                deadline = clock_gettime(CLOCK_MONOTONIC, &now) == 0 ? now.tv_sec + 6 : 1;
++            }
++            kill(pid, event);
++        } else if (event < 0 && errno != EINTR && errno != EAGAIN) {
++            kill(pid, SIGKILL);
++            wait_for_child(pid);
++            return EXIT_EXECERROR;
++        }
++    }
++}
++
++/* The Ubuntu tool is needed only for explicit extraction and no-FUSE launches.
++ * Retain an open image descriptor so the helper reads the selected image. */
++static bool extract_appimage(const char *image, const char *dest, const char *pattern, struct launch_signals *signals) {
++    int fd = open(image, O_RDONLY);
++    if (fd < 0) { perror("open AppImage"); return false; }
++    char input[64], offset[32];
++    snprintf(input, sizeof(input), "/proc/self/fd/%d", fd);
++    snprintf(offset, sizeof(offset), "%zu", (size_t)fs_offset);
++    pid_t pid = fork();
++    if (pid == 0) {
++        restore_child_mask(signals);
++        execl("/usr/bin/unsquashfs", "unsquashfs", "-quiet", "-no-progress",
++              "-strict-errors", "-no-xattrs", "-offset", offset, "-d", dest, input,
++              pattern, (char *)NULL);
++        fprintf(stderr, "Install Ubuntu's squashfs-tools for extraction, or launch Kiwix with FUSE.\n");
++        _exit(EXIT_EXECERROR);
++    }
++    close(fd);
++    if (pid < 0) { perror("start unsquashfs"); return false; }
++    return wait_for_launch(pid, signals) == 0;
+ }
+ 
+ int rm_recursive_callback(const char* path, const struct stat* stat, const int type, struct FTW* ftw) {
+@@ -945,7 +914,7 @@
+         case FTW_SLN:
+             if (remove(path) != 0) {
+                 fprintf(stderr, "Failed to remove %s: %s\n", path, strerror(errno));
+-                return false;
++                return 1;
+             }
+             break;
+ 
+@@ -953,7 +922,7 @@
+         case FTW_DP:
+             if (rmdir(path) != 0) {
+                 fprintf(stderr, "Failed to remove directory %s: %s\n", path, strerror(errno));
+-                return false;
++                return 1;
+             }
+             break;
+ 
+@@ -970,9 +939,32 @@
+     // FTW_MOUNT: prevent deletion of files on other mounted filesystems
+     // FTW_PHYS: do not follow symlinks, but report symlinks as such; this way, the symlink targets, which might point
+     //           to locations outside path will not be deleted accidentally (attackers might abuse this)
+-    int rv = nftw(path, &rm_recursive_callback, 0, FTW_DEPTH | FTW_MOUNT | FTW_PHYS);
+-
+-    return rv == 0;
++    int rv = nftw(path, &rm_recursive_callback, 16, FTW_DEPTH | FTW_MOUNT | FTW_PHYS);
++    struct stat remaining;
++    if (rv != 0 || lstat(path, &remaining) == 0 || errno != ENOENT) {
++        fprintf(stderr, "AppImage withdrawal incomplete at %s\n", path);
++        return false;
++    }
++    return true;
++}
++
++/* Only remove the directory created by this invocation. The private root is
++ * anchored under a verified parent and cannot be renamed by another user. */
++static bool remove_owned_tree(const char *path, int anchor) {
++    struct stat held, named;
++    if (fstat(anchor, &held) != 0 || lstat(path, &named) != 0 ||
++        held.st_dev != named.st_dev || held.st_ino != named.st_ino) {
++        fprintf(stderr, "AppImage directory changed; preserving the current entry\n");
++        return false;
++    }
++    return rm_recursive(path);
++}
++
++static void remove_mount_directory(const char *path) {
++    struct stat held, named;
++    if (fstat(mount_anchor, &held) == 0 && lstat(path, &named) == 0 &&
++        held.st_dev == named.st_dev && held.st_ino == named.st_ino && rmdir(path) != 0)
++        perror("remove empty AppImage mountpoint");
+ }
+ 
+ void build_mount_point(char* mount_dir, const char* const argv0, const char* const temp_base, const size_t templen) {
+@@ -1118,7 +1110,7 @@
+     }
+     fuse_opt_free_args(&args);
+     if (mounted)
+-        rmdir(fuse_cmdline_opts.mountpoint);
++        remove_mount_directory(fuse_cmdline_opts.mountpoint);
+     free(ll);
+     free(fuse_cmdline_opts.mountpoint);
+ 
+@@ -1447,17 +1439,15 @@
+     char portable_config_dir[PATH_MAX];
+ 
+     /* If there is a directory with the same name as the AppImage plus ".home", then export $HOME */
+-    strcpy(portable_home_dir, basepath);
+-    strcat(portable_home_dir, ".home");
+-    if (is_writable_directory(portable_home_dir)) {
++    if (snprintf(portable_home_dir, sizeof(portable_home_dir), "%s.home", basepath) >= (int)sizeof(portable_home_dir)) return;
++    if (use_portable_directory(portable_home_dir)) {
+         fprintf(stderr, "Setting $HOME to %s\n", portable_home_dir);
+         setenv("HOME", portable_home_dir, 1);
+     }
+ 
+     /* If there is a directory with the same name as the AppImage plus ".config", then export $XDG_CONFIG_HOME */
+-    strcpy(portable_config_dir, basepath);
+-    strcat(portable_config_dir, ".config");
+-    if (is_writable_directory(portable_config_dir)) {
++    if (snprintf(portable_config_dir, sizeof(portable_config_dir), "%s.config", basepath) >= (int)sizeof(portable_config_dir)) return;
++    if (use_portable_directory(portable_config_dir)) {
+         fprintf(stderr, "Setting $XDG_CONFIG_HOME to %s\n", portable_config_dir);
+         setenv("XDG_CONFIG_HOME", portable_config_dir, 1);
+     }
+@@ -1469,33 +1459,16 @@
+         fprintf(stderr, "Running in verbose mode\n");
+     }
+ 
+-    char appimage_path[PATH_MAX];
+-    char argv0_path[PATH_MAX];
++    const char *target = getenv("TARGET_APPIMAGE");
++    int image_fd = open(target ? target : "/proc/self/exe", O_RDONLY | O_CLOEXEC);
++    struct stat image_stat;
++    if (image_fd < 0 || fstat(image_fd, &image_stat) < 0 || !S_ISREG(image_stat.st_mode))
++        die("Cannot retain the selected AppImage.");
++    char appimage_path[64];
++    snprintf(appimage_path, sizeof(appimage_path), "/proc/self/fd/%d", image_fd);
++    const char *argv0_path = target ? target : argv[0];
+     char* arg;
+-
+-    /* We might want to operate on a target appimage rather than this file itself,
+-     * e.g., for appimaged which must not run untrusted code from random AppImages.
+-     * This variable is intended for use by e.g., appimaged and is subject to
+-     * change any time. Do not rely on it being present. We might even limit this
+-     * functionality specifically for builds used by appimaged.
+-     */
+-    if (getenv("TARGET_APPIMAGE") == NULL) {
+-        strcpy(appimage_path, "/proc/self/exe");
+-        strcpy(argv0_path, argv[0]);
+-    } else {
+-        strcpy(appimage_path, getenv("TARGET_APPIMAGE"));
+-        strcpy(argv0_path, getenv("TARGET_APPIMAGE"));
+-    }
+-
+-    // temporary directories are required in a few places
+-    // therefore we implement the detection of the temp base dir at the top of the code to avoid redundancy
+-    char temp_base[PATH_MAX] = P_tmpdir;
+-
+-    {
+-        const char* const TMPDIR = getenv("TMPDIR");
+-        if (TMPDIR != NULL)
+-            strcpy(temp_base, getenv("TMPDIR"));
+-    }
++    char temp_base[PATH_MAX];
+ 
+     fs_offset = appimage_get_elf_size(appimage_path);
+ 
+@@ -1512,7 +1485,7 @@
+         char fullpath[PATH_MAX];
+ 
+         ssize_t length = readlink(appimage_path, fullpath, sizeof(fullpath));
+-        if (length < 0) {
++        if (length < 0 || (size_t)length >= sizeof(fullpath)) {
+             fprintf(stderr, "Error getting realpath for %s\n", appimage_path);
+             exit(EXIT_EXECERROR);
+         }
+@@ -1549,9 +1522,18 @@
+             exit(1);
+         }
+ 
+-        if (!extract_appimage(appimage_path, "squashfs-root/", pattern, true, verbose)) {
+-            exit(1);
+-        }
++        struct launch_signals signals;
++        begin_supervision(&signals);
++        char cwd[PATH_MAX];
++        if (!trusted_directory(".", cwd) || mkdir("squashfs-root", 0700) != 0)
++            die("Extract into a trusted directory with no existing squashfs-root.");
++        int owned = open("squashfs-root", O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
++        if (owned < 0) die("Cannot retain the newly created empty squashfs-root directory.");
++        if (!extract_appimage(appimage_path, "squashfs-root", pattern, &signals)) {
++            remove_owned_tree("squashfs-root", owned);
++            exit(signals.cancelled ? 128 + signals.cancelled : EXIT_EXECERROR);
++        }
++        close(owned);
+ 
+         exit(0);
+     }
+@@ -1559,116 +1541,79 @@
+     // calculate full path of AppImage
+     char fullpath[PATH_MAX];
+ 
+-    if (getenv("TARGET_APPIMAGE") == NULL) {
+-        // If we are operating on this file itself
+-        ssize_t len = readlink(appimage_path, fullpath, sizeof(fullpath));
+-        if (len < 0) {
+-            perror("Failed to obtain absolute path");
++    ssize_t image_length = readlink(appimage_path, fullpath, sizeof(fullpath));
++    if (image_length < 0 || (size_t)image_length >= sizeof(fullpath))
++        die("Cannot resolve the selected AppImage path.");
++    fullpath[image_length] = '\0';
++
++    if (getenv("APPIMAGE_EXTRACT_AND_RUN") != NULL || (arg && strcmp(arg, "appimage-extract-and-run") == 0)) {
++        struct launch_signals signals;
++        begin_supervision(&signals);
++        temp_directory(temp_base);
++        char prefix[PATH_MAX];
++        int length = snprintf(prefix, sizeof(prefix), "%s/.kiwix-appimage-XXXXXX", temp_base);
++        if (length < 0 || (size_t)length >= sizeof(prefix) || !mkdtemp(prefix)) {
++            fprintf(stderr, "Cannot create private AppImage extraction directory\n");
+             exit(EXIT_EXECERROR);
+         }
+-        fullpath[len] = '\0';
+-    } else {
+-        char* abspath = realpath(appimage_path, NULL);
+-        if (abspath == NULL) {
+-            perror("Failed to obtain absolute path");
++        int owned = open(prefix, O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
++        if (owned < 0) {
++            fprintf(stderr, "Cannot retain the newly created empty directory %s: %s\n", prefix, strerror(errno));
+             exit(EXIT_EXECERROR);
+         }
+-        strcpy(fullpath, abspath);
+-        free(abspath);
+-    }
+-
+-    if (getenv("APPIMAGE_EXTRACT_AND_RUN") != NULL || (arg && strcmp(arg, "appimage-extract-and-run") == 0)) {
+-        char* hexlified_digest = NULL;
+-
+-        // calculate MD5 hash of file, and use it to make extracted directory name "content-aware"
+-        // see https://github.com/AppImage/AppImageKit/issues/841 for more information
+-        {
+-            FILE* f = fopen(appimage_path, "rb");
+-            if (f == NULL) {
+-                perror("Failed to open AppImage file");
+-                exit(EXIT_EXECERROR);
++        char appdir[PATH_MAX];
++        length = snprintf(appdir, sizeof(appdir), "%s/AppDir", prefix);
++        if (length < 0 || (size_t)length >= sizeof(appdir) ||
++            !extract_appimage(appimage_path, appdir, NULL, &signals)) {
++            fprintf(stderr, "Failed to extract AppImage\n");
++            remove_owned_tree(prefix, owned);
++            exit(signals.cancelled ? 128 + signals.cancelled : EXIT_EXECERROR);
++        }
++
++        pid_t pid = fork();
++        if (pid < 0) {
++            perror("fork");
++            remove_owned_tree(prefix, owned);
++            exit(signals.cancelled ? 128 + signals.cancelled : EXIT_EXECERROR);
++        } else if (pid == 0) {
++            restore_child_mask(&signals);
++            char apprun_path[PATH_MAX];
++            int length = snprintf(apprun_path, sizeof(apprun_path), "%s/AppRun", appdir);
++            if (length < 0 || (size_t)length >= sizeof(apprun_path)) exit(EXIT_EXECERROR);
++
++            /* argv already has room for argc pointers and the null terminator. */
++            argv[0] = apprun_path;
++            int count = 1;
++            for (int i = 1; i < argc; ++i) {
++                if (strcmp(argv[i], "--appimage-extract-and-run") != 0) argv[count++] = argv[i];
+             }
+-
+-            Md5Context ctx;
+-            Md5Initialise(&ctx);
+-
+-            char buf[4096];
+-            size_t bytes_read;
+-            while ((bytes_read = fread(buf, sizeof(char), sizeof(buf), f)) > 0) {
+-                Md5Update(&ctx, buf, (uint32_t) bytes_read);
+-            }
+-
+-            MD5_HASH digest;
+-            Md5Finalise(&ctx, &digest);
+-
+-            hexlified_digest = appimage_hexlify((const char*)digest.bytes, sizeof(digest.bytes));
+-        }
+-
+-        char* prefix = malloc(strlen(temp_base) + 20 + strlen(hexlified_digest) + 2);
+-        strcpy(prefix, temp_base);
+-        strcat(prefix, "/appimage_extracted_");
+-        strcat(prefix, hexlified_digest);
+-        free(hexlified_digest);
+-
+-        if (!extract_appimage(appimage_path, prefix, NULL, false, verbose)) {
+-            fprintf(stderr, "Failed to extract AppImage\n");
+-            exit(EXIT_EXECERROR);
+-        }
+-
+-        int pid;
+-        if ((pid = fork()) == -1) {
+-            int error = errno;
+-            fprintf(stderr, "fork() failed: %s\n", strerror(error));
+-            exit(EXIT_EXECERROR);
+-        } else if (pid == 0) {
+-            const char apprun_fname[] = "AppRun";
+-            char* apprun_path = malloc(strlen(prefix) + 1 + strlen(apprun_fname) + 1);
+-            strcpy(apprun_path, prefix);
+-            strcat(apprun_path, "/");
+-            strcat(apprun_path, apprun_fname);
+-
+-            // create copy of argument list without the --appimage-extract-and-run parameter
+-            char* new_argv[argc];
+-            int new_argc = 0;
+-            new_argv[new_argc++] = strdup(apprun_path);
+-            for (int i = 1; i < argc; ++i) {
+-                if (strcmp(argv[i], "--appimage-extract-and-run") != 0) {
+-                    new_argv[new_argc++] = strdup(argv[i]);
+-                }
+-            }
+-            new_argv[new_argc] = NULL;
++            argv[count] = NULL;
+ 
+             /* Setting some environment variables that the app "inside" might use */
+             setenv("APPIMAGE", fullpath, 1);
+             setenv("ARGV0", argv0_path, 1);
+-            setenv("APPDIR", prefix, 1);
++            setenv("APPDIR", appdir, 1);
+ 
+             set_portable_home_and_config(fullpath);
+ 
+-            execv(apprun_path, new_argv);
++            execv(apprun_path, argv);
+ 
+             int error = errno;
+             fprintf(stderr, "Failed to run %s: %s\n", apprun_path, strerror(error));
+ 
+-            free(apprun_path);
+             exit(EXIT_EXECERROR);
+         }
+ 
+-        int status = 0;
+-        int rv = waitpid(pid, &status, 0);
+-        status = rv > 0 && WIFEXITED (status) ? WEXITSTATUS (status) : EXIT_EXECERROR;
+-
++        int status = wait_for_launch(pid, &signals);
+         if (getenv("NO_CLEANUP") == NULL) {
+-            if (!rm_recursive(prefix)) {
++            if (!remove_owned_tree(prefix, owned)) {
+                 fprintf(stderr, "Failed to clean up cache directory\n");
+                 if (status == 0)        /* avoid messing existing failure exit status */
+                     status = EXIT_EXECERROR;
+             }
+         }
+ 
+-        // template == prefix, must be freed only once
+-        free(prefix);
+-
++        close(owned);
+         exit(status);
+     }
+ 
+@@ -1706,6 +1651,7 @@
+ 
+     int dir_fd, res;
+ 
++    temp_directory(temp_base);
+     size_t templen = strlen(temp_base);
+ 
+     // allocate enough memory (size of name won't exceed 60 bytes)
+@@ -1715,21 +1661,26 @@
+ 
+     size_t mount_dir_size = strlen(mount_dir);
+     pid_t pid;
+-    char** real_argv;
+-    int i;
+ 
+     if (mkdtemp(mount_dir) == NULL) {
+         perror("create mount dir error");
+         exit(EXIT_EXECERROR);
+     }
+ 
++    mount_anchor = open(mount_dir, O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
++    if (mount_anchor < 0) {
++        fprintf(stderr, "Cannot retain the new empty mount directory %s: %s\n", mount_dir, strerror(errno));
++        exit(EXIT_EXECERROR);
++    }
+     if (pipe(keepalive_pipe) == -1) {
++        remove_mount_directory(mount_dir);
+         perror("pipe error");
+         exit(EXIT_EXECERROR);
+     }
+ 
+     pid = fork();
+     if (pid == -1) {
++        remove_mount_directory(mount_dir);
+         perror("fork error");
+         exit(EXIT_EXECERROR);
+     }
+@@ -1747,16 +1698,16 @@
+                 }
+                 free(new_prog);
+             } else {
+-                printf("Error: No suitable fusermount binary found on the $PATH\n");
++                fprintf(stderr, "No suitable fusermount binary available.\n");
+             }
+         }
+ 
+-        char* child_argv[5];
++        char* child_argv[6] = {0};
+ 
+         /* close read pipe */
+         close(keepalive_pipe[0]);
+ 
+-        char* dir = realpath(appimage_path, NULL);
++        char* dir = appimage_path;
+ 
+         char options[100];
+         sprintf(options, "ro,offset=%zu", fs_offset);
+@@ -1775,8 +1726,9 @@
+                    "if you run it with the --appimage-extract option. \n"
+                    "See https://github.com/AppImage/AppImageKit/wiki/FUSE \n"
+                    "for more information";
+-            printf("\n%s\n", title);
+-            printf("%s\n", body);
++            fprintf(stderr, "\n%s\n", title);
++            fprintf(stderr, "%s\n", body);
++            _exit(EXIT_EXECERROR);
+         };
+     } else {
+         /* in parent, child is $pid */
+@@ -1785,11 +1737,14 @@
+         /* close write pipe */
+         close(keepalive_pipe[1]);
+ 
+-        /* Pause until mounted */
+-        read(keepalive_pipe[0], &c, 1);
+-
+-        /* Fuse process has now daemonized, reap our child */
+-        waitpid(pid, NULL, 0);
++        /* The daemon sends readiness only after mounting. EOF is a failure. */
++        ssize_t ready;
++        do { ready = read(keepalive_pipe[0], &c, 1); } while (ready < 0 && errno == EINTR);
++        int mount_status = wait_for_child(pid);
++        if (ready != 1 || mount_status != 0) {
++            remove_mount_directory(mount_dir);
++            die("FUSE mount failed. Install fuse3 or use --appimage-extract-and-run with squashfs-tools.");
++        }
+ 
+         dir_fd = open(mount_dir, O_RDONLY);
+         if (dir_fd == -1) {
+@@ -1803,12 +1758,6 @@
+             exit(EXIT_EXECERROR);
+         }
+         close(dir_fd);
+-
+-        real_argv = malloc(sizeof(char*) * (argc + 1));
+-        for (i = 0; i < argc; i++) {
+-            real_argv[i] = argv[i];
+-        }
+-        real_argv[i] = NULL;
+ 
+         if (arg && strcmp(arg, "appimage-mount") == 0) {
+             char real_mount_dir[PATH_MAX];
+@@ -1847,7 +1796,7 @@
+         strcat(filename, "/AppRun");
+ 
+         /* TODO: Find a way to get the exit status and/or output of this */
+-        execv(filename, real_argv);
++        execv(filename, argv);
+         /* Error if we continue here */
+         perror("execv error");
+         exit(EXIT_EXECERROR);

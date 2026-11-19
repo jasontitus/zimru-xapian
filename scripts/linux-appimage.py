@@ -23,8 +23,9 @@ RUNTIME = UPSTREAM / "runtime-x86_64"
 NOTICES = ("LICENSE", "SOURCE.txt", "type2-runtime-fedfad51.tar.gz", "fuse-3.15.0.tar.xz",
            "squashfuse-0.5.2.tar.gz", "third-party/libfuse-LGPL-2", "third-party/squashfuse-LICENSE",
            "third-party/mimalloc-MIT", "third-party/musl-COPYRIGHT", "third-party/zlib-LICENSE",
-           "third-party/zstd-BSD")
-RUNTIME_SHA = "617aa77314d57c8b8e4fae9c3f0b35af7b30d5529cb69e98f64f92510ed98a46"
+           "third-party/zstd-BSD", "private-extraction.patch", "recipe/Dockerfile",
+           "recipe/alpine-packages.txt", "recipe/rebuild.sh")
+RUNTIME_SHA = "93fe0ddf30ba5b2f788f56f64e8b8c9ed8a52f3cf1784d58751fcd95b7ba567e"
 ID = "org.kiwix.workbench"
 APP = "kiwix-workbench"
 BIN = Path("usr/bin")

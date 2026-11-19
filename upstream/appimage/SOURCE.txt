@@ -1,23 +1,32 @@
-AppImage type-2 runtime for x86-64 Linux
-Source commit fedfad51acc2860b2916a1eef32ba4a500ff31ef
+Kiwix system-runtime AppImage bootstrap for Ubuntu 24.04 x86-64
+
+Upstream AppImage/type2-runtime commit fedfad51acc2860b2916a1eef32ba4a500ff31ef
 https://github.com/AppImage/type2-runtime/tree/fedfad51acc2860b2916a1eef32ba4a500ff31ef
+The corresponding type2-runtime-fedfad51.tar.gz is retained unmodified.
+SHA-256 e27ea3c837e9c660e1a9a2993b673ae93bbb53077330efba8654031e302d4e8e
 
-The unchanged upstream runtime-x86_64 release asset has SHA-256
-617aa77314d57c8b8e4fae9c3f0b35af7b30d5529cb69e98f64f92510ed98a46.
-https://github.com/AppImage/type2-runtime/actions/runs/39320578745
+Kiwix's private-extraction.patch changes the native bootstrap. The x86-64
+ELF built from that source is runtime-x86_64 with SHA-256
+93fe0ddf30ba5b2f788f56f64e8b8c9ed8a52f3cf1784d58751fcd95b7ba567e.
+Run recipe/rebuild.sh on an x86-64 Linux Docker host to reproduce and
+compare the retained bytes. The Dockerfile pins the Alpine base image,
+146 Alpine package versions and the libfuse and squashfuse archives.
+Rebuilding requires access to those versions in the signed Alpine
+repositories or an equivalent retained package mirror.
 
-The corresponding source archive type2-runtime-fedfad51.tar.gz has SHA-256
-e27ea3c837e9c660e1a9a2993b673ae93bbb53077330efba8654031e302d4e8e.
-It includes the upstream build scripts, static runtime build configuration,
-libfuse patch and dependency source references. LICENSE preserves upstream's
-notice and the terms for its linked dependencies. This native loader mounts
-or extracts the application's SquashFS package before running AppRun.
+The native bootstrap uses FUSE/squashfuse to mount the installed package.
+Explicit extraction and no-FUSE launch use /usr/bin/unsquashfs from the
+Ubuntu squashfs-tools package. The bootstrap verifies temporary directory
+ownership and allocates each automatic extraction with mkdtemp. It
+retains the selected image across inspection and native subprocesses.
+An explicit extraction requires a fresh squashfs-root in a trusted
+working directory. Other users cannot write optional portable sidecars.
 
-The packaged libfuse 3.15.0 and squashfuse 0.5.2 archives match the hashes
-required by scripts/common/install-dependencies.sh in the retained source.
-Its Alpine 3.21 build links musl, zlib, zstd and mimalloc as well. The
-third-party directory contains their upstream notices, including mimalloc,
-which is named in the runtime Makefile. The upstream Alpine package versions
-are not frozen by that Dockerfile. Use upstream BUILD.md and included libfuse
-patch to rebuild the statically linked loader. Source files and notices are
-installed under usr/lib/org.kiwix.workbench/licenses/appimage-runtime.
+The original upstream libfuse 3.15.0 and squashfuse 0.5.2 source archives
+match the digests in scripts/common/install-dependencies.sh of the
+retained upstream source. The original libfuse patch is inside that archive.
+The native bootstrap is statically linked with musl, zlib, zstd, mimalloc,
+libfuse and squashfuse. LICENSE preserves the upstream notice and terms.
+Original notices for linked components are retained in third-party.
+The packaged patch, build recipe, source archives and notices accompany
+the reader licenses under usr/lib/org.kiwix.workbench/licenses/appimage-runtime.

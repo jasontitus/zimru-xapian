@@ -1,0 +1,22 @@
+# Ubuntu system-runtime AppImage acceptance
+
+The private packaging checkpoint uses application source `9425525fa0fa6ba9781aab88a75226b4e45399b2` and follows the blocked upstream-bootstrap prototype `aea82853d24ec6bc15025a8e24842b4136107d55`. Both builds contain the real release application and MCP relay. The upgrade fixture changes the local Cargo package, lockfile and Tauri version to 0.1.1. The tests ran on x86-64 Ubuntu 24.04 with WebKitGTK 2.52.6 and GStreamer 1.24.2.
+
+| SHA-256 | Value |
+| --- | --- |
+| Patched bootstrap | `93fe0ddf30ba5b2f788f56f64e8b8c9ed8a52f3cf1784d58751fcd95b7ba567e` |
+| Upstream source patch | `9b6da1b317d3ea4fd68f6a008fa8fdf53501175ff38a6bde82ce8050d4f238c3` |
+| 0.1.0 AppImage | `6c3ec35b9dc33cf077f5be413c219b2b41d3baf21ddaefa995525d9a1c67769b` |
+| 0.1.1 AppImage | `a5c7bf0f10a24363f39dbd7d92bcc68626d8c25a9769ced0f796d83b8fc26a36` |
+
+**Package and startup.** The version-pinned build recipe independently reproduced the bootstrap. Reassembling the same Debian package, source files, compiled app and relay reproduced the 0.1.0 AppImage. A normal unprivileged kernel FUSE mount served the reader and MCP relay. A headless invocation opened a fixture ZIM and all its recorded mounts withdrew. The fallback also ran simultaneously under two unprivileged accounts sharing a sticky temporary directory. Each got a separate mode-0700 tree and both trees disappeared after exit.
+
+The permanent launch test covered extraction output limits, failed mounts, pre-existing files, portable settings directories, direct INT/TERM to a supervisor, a stopped child, independent concurrent readers and inherited ignored or blocked interrupts. Normal and interrupted release paths removed their owned trees. An uncatchable kill or power loss can leave a private tree. The complete image on read-only Ubuntu with WebKitGTK withheld exited 127 before emitting readiness and named the required packages. Unavailable `unsquashfs` produced a separate actionable error. A spaced portable path used its own profile. Its MCP relay listed the fixture archive, refused another profile and refused access after disabling the connector.
+
+**Reader and media.** Title and full-text search, article preview, original HTML export, a 24-attachment MHTML export, integrity checks and byte ranges passed on real ZIM fixtures. Climate 200 matched across a normal archive, reopening and a split archive. Its GTK print operation produced a one-page A4 PDF, 2,089,116 bytes, SHA-256 `ae56f3f4068bca68fcaecd700af30b720c7ef927915e1b088dd2e83b921b3fb4`. The full Poppler text matched the verified Debian result, SHA-256 `66d7da049ab053512d1ebfb4886fe6a377fe0ae61a12746160c75c7b980aec56`.
+
+A trusted click played the silent 160-pixel VP8/WebM fixture to its two-second end. With host VP8 decoder plugins withheld, WebKit reported media error 4 and kept the article accessible. Executable mappings for the reader, web process and network process placed WebKitGTK, JavaScriptCore and GStreamer in the Ubuntu system. Normal playback loaded the system app, Matroska and VPX plugins. The payload contains two ELF programs, the application and relay. The outer native bootstrap and its statically linked mount/decompression code remain part of the distribution. [Runtime source and licensed dependencies](../../upstream/appimage/SOURCE.txt)
+
+**Release checks.** The public manifest command and workflow staging accepted the final image. Staging refused the standard Tauri image, and aggregation refused that image even with a genuine temporary signature. The four-target aggregate used three inert signed controls for the non-Linux positions. The native loopback test installed the signed 0.1.1 bytes over a temporary 0.1.0 image, compared the result and launched the replacement. A changed byte caused signature rejection. A separate run used a copy of the hash-checked original Tauri image as the installed file and exercised the same replacement. These tests used the real updater library with a mock application and temporary trust key. They did not exercise a running legacy GUI restart or publish a release.
+
+The Linux release-mode app suite passed 1,240 tests with 16 ignored. Nineteen CLI and manifest tests passed. Five rejected Debian payload cases preserved the original input. Desktop entry, GeoClue identifier, MIME/scheme handlers, icons, resources and license bytes were inspected. Location consent, other distributions and codecs beyond the tested fixture remain outside this evidence. [Build and launch commands](../PACKAGING.md#linux-x86_64-commands)

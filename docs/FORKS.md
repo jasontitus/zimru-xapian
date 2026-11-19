@@ -182,4 +182,4 @@ Each fork that lands upstream removes a re-application step from every future up
 
 ## Linux AppImage runtime
 
-The x86-64 AppImage uses the upstream type-2 runtime at `fedfad51acc2860b2916a1eef32ba4a500ff31ef`. The archived source and bootstrap binary hashes, linked components and licensing material are recorded in [the runtime provenance](../upstream/appimage/SOURCE.txt). The package launcher runs the application against the installed Linux desktop stack. [Linux package instructions](PACKAGING.md#linux-x86_64-commands)
+The x86-64 AppImage uses a fork of the type-2 runtime at `fedfad51acc2860b2916a1eef32ba4a500ff31ef`. The fork creates private extraction directories, uses Ubuntu’s system extractor and validates portable profile directories. The archived source and bootstrap binary hashes, linked components and licensing material are recorded in [the runtime provenance](../upstream/appimage/SOURCE.txt). The package launcher runs the application against the installed Linux desktop stack. [Linux package instructions](PACKAGING.md#linux-x86_64-commands)

@@ -110,6 +110,7 @@ jobs:
           for image in src-tauri/target/release/bundle/appimage/*.AppImage; do
             image=$(realpath "$image")
             python3 scripts/linux-appimage.py verify "$image"
+            python3 scripts/test-linux-appimage-runtime.py "$image"
             extracted=$(mktemp -d "$RUNNER_TEMP/kiwix-appimage-XXXXXX")
             (cd "$extracted" && "$image" --appimage-extract > /dev/null)
             node scripts/check-archive-libraries.mjs "$extracted/squashfs-root" --elf
