@@ -110,11 +110,6 @@ tar = "0.4"
 # without it, Apple Silicon and ARM phones always use the software compressor.
 # Not on Windows ARM64: sha2-asm's AArch64 code is GNU assembly, which MSVC
 # cannot build; Windows ARM64 uses the portable compressor.
-# Retaining decoded buffers improved these release-reader workloads. Android
-# uses the default inline storage while its emulator results remain mixed.
-[target.'cfg(any(target_os = "linux", target_os = "macos", target_os = "ios"))'.dependencies]
-zimru = { git = "https://github.com/jasontitus/zimru-xapian.git", rev = "1c0f5e3a8d748bf7304588e7db73022555323561", default-features = false, features = ["retained-cluster-buffers"] }
-
 [target.'cfg(all(target_arch = "aarch64", not(target_os = "windows")))'.dependencies]
 sha2 = { version = "0.10", features = ["asm"] }
 
@@ -154,6 +149,11 @@ codegen-units = 1
 # exercise this setting with the same decoded-cache budget as the app.
 [profile.release.package.zstd-rs]
 codegen-units = 16
+
+# Retaining decoded buffers improved these release-reader workloads. Android
+# uses the default inline storage while its emulator results remain mixed.
+[target.'cfg(any(target_os = "linux", target_os = "macos", target_os = "ios"))'.dependencies]
+zimru = { git = "https://github.com/jasontitus/zimru-xapian.git", rev = "1c0f5e3a8d748bf7304588e7db73022555323561", default-features = false, features = ["retained-cluster-buffers"] }
 
 [target.'cfg(not(any(target_os = "ios", target_os = "android")))'.dependencies]
 # Signed desktop updates. The frontend never calls the plugin's JS commands;
