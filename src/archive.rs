@@ -23,7 +23,7 @@ use cache::Cache;
 use memmap2::Mmap;
 use rayon::prelude::*;
 
-use crate::cluster::{Cluster, RawOffsets};
+use crate::cluster::{Cluster, PayloadPin, RawOffsets};
 use crate::dirent::{ArticleEntry, DirectoryRecord, Dirent};
 use crate::error::{Error, Result};
 use crate::header::{Header, NO_MAIN_PAGE};
@@ -107,9 +107,9 @@ impl ClusterByteCache {
     }
 
     fn put(&mut self, idx: u32, cluster: Arc<Cluster>) {
-        let size = cluster.payload().len();
+        let size = cluster.payload_len();
         if let Some(prev) = self.inner.put(idx, cluster) {
-            self.current_bytes = self.current_bytes.saturating_sub(prev.payload().len());
+            self.current_bytes = self.current_bytes.saturating_sub(prev.payload_len());
         }
         self.current_bytes = self.current_bytes.saturating_add(size);
         self.evict_to_budget();
@@ -123,7 +123,7 @@ impl ClusterByteCache {
     fn evict_to_budget(&mut self) {
         while self.current_bytes > self.max_bytes && self.inner.len() > 1 {
             if let Some((_, evicted)) = self.inner.pop_lru() {
-                self.current_bytes = self.current_bytes.saturating_sub(evicted.payload().len());
+                self.current_bytes = self.current_bytes.saturating_sub(evicted.payload_len());
                 self.evictions += 1;
             } else {
                 break;
@@ -2060,7 +2060,7 @@ impl Item {
     pub fn get_data(&self) -> Result<Blob> {
         let (cluster, range) = self.pinned_blob()?;
         Ok(Blob {
-            payload: cluster.payload().clone(),
+            payload: cluster.pin_payload(),
             range,
         })
     }
@@ -2113,13 +2113,13 @@ impl Item {
 
 #[derive(Clone, Debug)]
 pub struct Blob {
-    payload: Arc<[u8]>,
+    payload: PayloadPin,
     range: std::ops::Range<usize>,
 }
 
 impl Blob {
     pub fn data(&self) -> &[u8] {
-        &self.payload[self.range.clone()]
+        &self.payload.as_ref()[self.range.clone()]
     }
 
     pub fn size(&self) -> usize {

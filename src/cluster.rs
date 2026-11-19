@@ -28,7 +28,7 @@
 
 use std::io::{BufReader, Read};
 use std::ops::Range;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, OnceLock};
 
 use crate::error::{Error, Result};
 
@@ -73,10 +73,79 @@ pub enum Compression {
     Zstd,
 }
 
+/// Pin on immutable bytes. A boxed slice avoids the mandatory copy into an
+/// inline Arc slice. Shrinking the decoder's Vec may still move its allocation.
+#[derive(Clone, Debug)]
+pub(crate) enum PayloadPin {
+    Decoded(Arc<Box<[u8]>>),
+    Shared(Arc<[u8]>),
+}
+
+impl AsRef<[u8]> for PayloadPin {
+    fn as_ref(&self) -> &[u8] {
+        match self {
+            Self::Decoded(bytes) => bytes,
+            Self::Shared(bytes) => bytes,
+        }
+    }
+}
+
+#[derive(Debug)]
+struct Payload {
+    len: usize,
+    // Only the legacy payload() accessor needs an Arc with inline slice storage.
+    shared: OnceLock<Arc<[u8]>>,
+    decoded: Mutex<Option<Arc<Box<[u8]>>>>,
+}
+
+impl From<Vec<u8>> for Payload {
+    fn from(bytes: Vec<u8>) -> Self {
+        Self {
+            len: bytes.len(),
+            shared: OnceLock::new(),
+            decoded: Mutex::new(Some(Arc::new(bytes.into_boxed_slice()))),
+        }
+    }
+}
+
+impl From<Arc<[u8]>> for Payload {
+    fn from(bytes: Arc<[u8]>) -> Self {
+        Self { len: bytes.len(), shared: OnceLock::from(bytes), decoded: Mutex::new(None) }
+    }
+}
+
+impl Payload {
+    fn pin(&self) -> PayloadPin {
+        if let Some(bytes) = self.shared.get() {
+            return PayloadPin::Shared(bytes.clone());
+        }
+        let decoded = self.decoded.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        match decoded.as_ref() {
+            Some(bytes) => PayloadPin::Decoded(bytes.clone()),
+            None => PayloadPin::Shared(self.shared.get().expect("shared payload published under lock").clone()),
+        }
+    }
+
+    fn shared(&self) -> &Arc<[u8]> {
+        if let Some(bytes) = self.shared.get() {
+            return bytes;
+        }
+        let mut decoded = self.decoded.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let bytes = self.shared.get_or_init(|| {
+            let source = decoded.as_ref().expect("decoded payload before publication");
+            Arc::from(source.as_ref().as_ref())
+        });
+        // Existing blob pins own their bytes until dropped. The cache retains
+        // only the shared representation after explicit publication.
+        *decoded = None;
+        bytes
+    }
+}
+
 #[derive(Debug)]
 pub struct Cluster {
     /// Decompressed (or pass-through) payload, NOT including the info byte.
-    payload: Arc<[u8]>,
+    payload: Payload,
     extended: bool,
     blob_count: u32,
     compression: Compression,
@@ -121,7 +190,7 @@ impl Cluster {
         };
 
         Ok(Cluster {
-            payload,
+            payload: payload.into(),
             extended,
             blob_count,
             compression,
@@ -219,16 +288,31 @@ impl Cluster {
         self.blob_count
     }
 
+    /// Returns a shareable slice of the whole payload. On a positioned read
+    /// the first call converts the decoded buffer to inline Arc storage.
+    /// Existing item blobs remain valid until their last pin is dropped.
     pub fn payload(&self) -> &Arc<[u8]> {
-        &self.payload
+        self.payload.shared()
+    }
+
+    pub(crate) fn pin_payload(&self) -> PayloadPin {
+        self.payload.pin()
+    }
+
+    pub(crate) fn payload_len(&self) -> usize {
+        self.payload.len
     }
 
     pub fn blob(&self, idx: u32) -> Result<&[u8]> {
         let r = self.blob_range(idx)?;
-        Ok(&self.payload[r])
+        Ok(&self.payload()[r])
     }
 
     pub fn blob_range(&self, idx: u32) -> Result<Range<usize>> {
+        self.range_in(idx, self.payload.pin().as_ref())
+    }
+
+    fn range_in(&self, idx: u32, payload: &[u8]) -> Result<Range<usize>> {
         if idx >= self.blob_count {
             return Err(Error::BadBlobIndex {
                 cluster: u32::MAX,
@@ -238,10 +322,10 @@ impl Cluster {
         }
         let ptr_size = if self.extended { 8 } else { 4 };
         let off_pos = idx as usize * ptr_size;
-        let start = read_off(&self.payload, off_pos, self.extended)?;
-        let end = read_off(&self.payload, off_pos + ptr_size, self.extended)?;
+        let start = read_off(payload, off_pos, self.extended)?;
+        let end = read_off(payload, off_pos + ptr_size, self.extended)?;
         let first = (self.blob_count as u64 + 1) * ptr_size as u64;
-        if start < first || end < start || end > self.payload.len() as u64 {
+        if start < first || end < start || end > payload.len() as u64 {
             return Err(Error::Truncated(end));
         }
         let (start, end) = (start as usize, end as usize);
@@ -549,6 +633,26 @@ mod tests {
         assert!(Cluster::parse(&bytes[..bytes.len() - 1]).is_err());
         bytes.push(0);
         assert!(Cluster::parse(&bytes).is_err());
+    }
+
+    #[test]
+    fn existing_blob_pins_survive_concurrent_shared_payload_requests() {
+        let raw = build_uncompressed_cluster(&[b"abc", b"defg"], false);
+        let cluster = Cluster::read(&raw[..], raw.len() as u64, None).unwrap();
+        let pin = cluster.pin_payload();
+        assert!(matches!(pin, PayloadPin::Decoded(_)));
+        assert!(cluster.blob(u32::MAX).is_err());
+        assert!(cluster.payload.shared.get().is_none());
+        let range = cluster.blob_range(1).unwrap();
+        assert_eq!(&pin.as_ref()[range.clone()], b"defg");
+        std::thread::scope(|scope| {
+            let first = scope.spawn(|| cluster.payload().clone());
+            let second = scope.spawn(|| cluster.payload().clone());
+            assert!(Arc::ptr_eq(&first.join().unwrap(), &second.join().unwrap()));
+        });
+        assert!(cluster.payload.decoded.lock().unwrap().is_none());
+        assert!(matches!(cluster.pin_payload(), PayloadPin::Shared(_)));
+        assert_eq!(cluster.blob(1).unwrap(), &pin.as_ref()[range]);
     }
 
     #[test]
