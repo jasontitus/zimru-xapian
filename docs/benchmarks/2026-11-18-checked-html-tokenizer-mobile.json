@@ -1,0 +1,111 @@
+{
+  "app_commit": "18388c223c21c4d7921c105ead667c893fe152d5",
+  "targets": {
+    "ios": "iOS 26.5 (23F77) on an owned iPhone 17 simulator, ARM64 Apple Silicon host. Ad-hoc signed simulator command-line helpers.",
+    "android": "Android API 35 Google APIs arm64-v8a emulator image revision 9. Headless fresh AVD, two virtual cores and 1536 MiB RAM. Native Android ELF helpers, NDK r28c API 24 linker. The two signed APK entries matched the native executables byte-for-byte. Each executable was verified by SHA-256 in the guest before launch."
+  },
+  "compiler": "Rust 1.95.0 release profile, aarch64-apple-ios-sim and aarch64-linux-android. All helpers use identical driver/source code and the committed application CSS patch. Control uses crates.io html5ever and markup5ever 0.39.0, candidate uses the two checked forks from the app commit.",
+  "scope": "The helpers compile copies of the app CPU clock, bounded parser, chunk splitter and live PDF sanitizer from the indicated commit. Measurements cover in-process parsing and sanitization on one ARM64 host. Physical phone performance, battery use, application UI, WebView layout and platform PDF rendering remain unmeasured.",
+  "validation": "Each helper first parsed four documents with the normal chunk splitter and a bounded sink. For every input the bounded tree serialization had to equal the ordinary DOM serialization. Both variants had to match the host oracle for the tree digest and bounded sink counters, including peak traced handles at chunk boundaries, element count and charged work. For each input, an already cancelled token had to return Cancelled and a deliberately low node limit had to return TooComplex. Four serialized sanitizer outputs also had to match the host oracle. Revalidated every measured invocation.",
+  "inputs": {
+    "capture-bridge-0.html": "9b32c31e8b65cf69aeac2d48db69b657dad0b08593f0abf09cedec7a96d1326d",
+    "capture-bridge-1.html": "7d88c0710cb0ec79637638aa8b3b291e520ffad2d4d0ff519cca1b90a6575b97",
+    "capture-climate.html": "48955ea19beff1f107817698a411a31a7d1059b5e03305b03b480fbe6d22ca59",
+    "capture-nollywood.html": "dfd6d02f29119b096f42a94ea8f832176ceb49fed2f7f3e4a2e527d710ee8bc8",
+    "climate.html": "645f9ae6621dfde78a97382b79a6261023aace2a9fee7961412557678a04ea76",
+    "lipsum-zh.html": "fafe3ed44b07f9cdb0a3ca5c010a3a73cc2534b64605593e71cc70a8cf8e27e4",
+    "lipsum.html": "f37900ddb4ee463b9aa3191297bc1a4320b94bc72ee630de01882b50eb241740",
+    "nollywood.html": "25f2fcafac543015ed87152d37a223b4c6d28f67d31e96b2eeee431234d67050"
+  },
+  "input_origins": "English and Chinese prose are the upstream html5ever lipsum fixtures. Climate and Nollywood are the complete archive entries identified in 2026-11-18-checked-html-tokenizer.json. Its bounded_mac section identifies the bridge and modeled captures used for the four-document sanitizer pass.",
+  "workloads": {
+    "ordinary": "Production chunk_end, discard_bom=false and ordinary dom_query DOM sink. 100 parse-and-drop operations per sample.",
+    "bounded": "Application Html::parse_chunked with ARTICLE_BOUNDS, 256-byte formatting-aware feeds, normal thread-CPU deadline and default work budget. 100 parse-and-drop operations per sample.",
+    "sanitize-four": "Twelve passes, each through all four snapshots, including parse and inert HTML generation at width 390. Times are per four-snapshot pass."
+  },
+  "method": "For each fresh helper process, validate inputs/outputs outside the timers, then time each workload after three untimed warmups. Both variants were also verified before the timed sequence. Nine pairs alternate execution order, starting with control. Discard the first pair and calculate the median of the remaining eight candidate/control ratios. All workloads run in the same fixed order. Instant elapsed wall time in the guest, excludes process launch, transfers and output checks. Numbers are experimental and have no confidence interval.",
+  "integrity": {
+    "harness_sha256": "c7df8165ac8d325f5f88ab104e1e9d2d99d6e3c6752ab2eae847d3c79a2526c1",
+    "assembled_identical_rust_sha256": "51783992bc6b2806fbaedde3afabdcccc0817cc04369f3d2b49eca80847215e6",
+    "host_oracle_sha256": "9f273594e1fd62573b3fbacfad0fb1abad8944145418f59f491f9a15618a524e",
+    "ios_helper_sha256": {
+      "control": "878f7b86d58db47c0aa195c5a4f14830e63d2612d6202ad82c4072c964b50ff2",
+      "candidate": "8e5deb99ca2397fac1f82411e8c2c83a8b1546640d19f707de59eb211d8220b9"
+    },
+    "android_helper_sha256": {
+      "control": "31a6f35fb31073da159fac38e640aca2a5b8f1ef282fe64dfda7a368368cbbf5",
+      "candidate": "2a299b2376fb5ff0d8ad36c955565a857f865352a80fbb06f1e1efc2e8a37350"
+    },
+    "android_signed_apk_sha256": "7695e6e515bb6ec712666f200e50cecf8d1545679b43f2ce914cdf5707117e91"
+  },
+  "correctness": {
+    "tree_columns": [
+      "ordinary_and_bounded_tree_sha256",
+      "bounded_peak_traced_handles_at_chunk_boundaries",
+      "bounded_elements",
+      "bounded_charged_work"
+    ],
+    "trees": {
+      "english": [
+        "8c54f8aa00a6f6444ffc2e9d3d58c22d3a45e7c14b57d50fedec53bcc9df33d6",
+        4,
+        3,
+        309
+      ],
+      "chinese": [
+        "888421ab0895e0d73de3739fa965294804090e2fa8db1efb8da4e0e187813f87",
+        4,
+        3,
+        103
+      ],
+      "climate": [
+        "1929087a647c6c3924484f0cae1f19e07001504603ecfaa0f8f73489d56633b5",
+        16,
+        122,
+        2845
+      ],
+      "nollywood": [
+        "710a8c1b0674abbc812a07fc7382005edc5c6496991bf56231f25e28fbb04d2a",
+        20,
+        678,
+        25768
+      ]
+    },
+    "sanitizer_output_sha256": {
+      "bridge-0": "45322321003b2287607a7905a632d7e2951d238d4e8056ca1e77d2f07556fb48",
+      "bridge-1": "2318aa647d170e72110aca88cb0e3ece6851a76b3203405aa9c983e94296868a",
+      "climate": "50518de49fa46d225a490dd467a02ef1555382633ab5943e7d1b125b1d98e6ae",
+      "nollywood": "ec58bd7fc03165a0af2819c181129b2049e79bfabc2b6491589968670fab2ec4"
+    }
+  },
+  "withdrawal": {
+    "ios": "New simulator identity verified before launch. Shutdown and deletion were confirmed. All simulator IDs present before the run remained present afterward.",
+    "android": "First attempt ended before emulator boot because the private connection service rejected its listener address. The runner removed its temporary state. After correction, the runner created a new isolated AVD, verified the active virtual transport, generated AVD name and ABI, then removed its transferred files and private AVD and confirmed its emulator and connection service exited. No application was installed on physical hardware."
+  },
+  "columns": [
+    "platform",
+    "workload",
+    "median_candidate_over_control",
+    "pairs_ns_per_operation_control_candidate"
+  ],
+  "rows": [
+    ["ios","ordinary-english",1.012951,[[151431,60880],[61405,61410],[57627,59115],[106015,74395],[93471,87355],[58861,69426],[61117,56666],[56090,61038],[56058,57809]]],
+    ["ios","bounded-english",1.040049,[[96811,87703],[92164,79597],[87065,116194],[158729,94337],[126990,114492],[85047,89419],[96340,100389],[86270,94290],[83268,86438]]],
+    ["ios","ordinary-chinese",1.043388,[[12078,12515],[14150,12384],[14219,15098],[15908,15287],[14228,14934],[13942,15158],[55872,15365],[14168,14743],[14115,14767]]],
+    ["ios","bounded-chinese",1.047197,[[19662,20807],[25602,19905],[29171,24224],[24681,24697],[23170,23910],[22726,24473],[23011,25784],[23165,36027],[23056,24496]]],
+    ["ios","ordinary-climate",0.972642,[[508330,439719],[441013,362496],[437360,463186],[487513,709264],[597212,518590],[404336,484955],[836751,408955],[486320,438118],[431531,450691]]],
+    ["ios","bounded-climate",1.093793,[[537237,484163],[461601,529864],[580401,556373],[718282,893462],[591059,626610],[593230,613888],[589013,591655],[511730,726783],[507316,571967]]],
+    ["ios","ordinary-nollywood",1.050325,[[2821210,2656791],[2443572,2562747],[2586584,2545125],[2734670,2964960],[2822608,3565310],[3052557,2693205],[2491201,2620442],[2639624,2811616],[2516307,2398370]]],
+    ["ios","bounded-nollywood",1.03521,[[2930680,3211392],[3010145,3172937],[3151877,3443535],[4141517,3650060],[3648055,3425820],[3884682,3583435],[3242337,3353012],[3191161,3306955],[3119226,3412232]]],
+    ["ios","sanitize-four",1.071435,[[5194704,5893506],[5959711,6385361],[5967937,6373260],[7922725,7353062],[6648597,9605864],[6380555,7984145],[5892034,6313010],[6841465,6307361],[5755427,6320680]]],
+    ["android","ordinary-english",1.070027,[[17387,26934],[65107,26870],[20105,18957],[23988,82806],[23501,44923],[24357,16687],[22323,45832],[44517,43244],[21085,24641]]],
+    ["android","bounded-english",0.823768,[[36854,53307],[126815,59994],[39163,40652],[63467,43852],[69854,66822],[54198,68401],[47039,82604],[96920,51955],[154311,54035]]],
+    ["android","ordinary-chinese",1.301217,[[13067,9371],[35932,6265],[9582,6292],[13001,6214],[5935,10294],[5985,5778],[6728,14986],[7157,32266],[7196,11780]]],
+    ["android","bounded-chinese",0.961469,[[39895,17082],[35876,20441],[14704,11775],[16457,18467],[14864,54046],[15148,21075],[11237,28134],[92106,18476],[40466,22085]]],
+    ["android","ordinary-climate",1.177429,[[377235,257930],[597695,267516],[190739,287164],[213570,253397],[190093,222100],[194565,288490],[192677,270406],[1000610,386809],[497001,295707]]],
+    ["android","bounded-climate",0.901655,[[490463,371536],[458192,413458],[219752,295312],[282682,332348],[265257,215087],[230271,412714],[506794,429855],[955730,650589],[514229,463290]]],
+    ["android","ordinary-nollywood",0.997227,[[2717577,1453136],[1531988,1533598],[2283342,1631733],[1762526,2211013],[1359962,1448375],[1652334,2715877],[2338320,1749698],[3418711,2494743],[2253205,2238343]]],
+    ["android","bounded-nollywood",0.743183,[[2227408,2770694],[2344964,1413850],[3096649,2890884],[2519927,1732550],[1995235,1500520],[2079355,3393307],[4550040,3341161],[4511883,3425164],[4811292,3048505]]],
+    ["android","sanitize-four",0.849261,[[3707975,3809843],[3323767,3034739],[7477694,5873579],[3709805,2457163],[2451149,3210909],[3914854,8731722],[10923875,4847184],[8542010,9285954],[8227781,5352194]]]
+  ]
+}
