@@ -1,0 +1,11 @@
+SipHasher is available under the MIT License or Apache License,
+Version 2.0, at your option. Both license texts accompany this notice.
+Published source version: 1.0.4
+Upstream source revision: ed028f01a16205b0819fa83b0cdc052e2d5ac3b7
+https://github.com/jedisct1/rust-siphash
+Published archive SHA-256:
+33f4fe9184a62d842c9ef383018f3306d8ba224fd9d836f56d7288308847c256
+Archive in this source distribution: upstream/siphasher/siphasher-1.0.4.crate
+
+The local copy at src-tauri/vendor/siphasher-1.0.4 uses checked
+Rust for input block and tail loads.

@@ -1,0 +1,8 @@
+[package]
+name = "siphash-load-audit"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+original = { package = "siphasher", version = "=1.0.4" }
+checked = { package = "siphasher", path = "../../src-tauri/vendor/siphasher-1.0.4" }

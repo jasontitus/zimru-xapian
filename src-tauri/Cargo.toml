@@ -227,6 +227,8 @@ markup5ever = { path = "vendor/markup5ever-0.39.0" }
 tendril = { path = "vendor/tendril-0.5.1" }
 # Use checked ownership for archive-supplied tag and attribute names.
 string_cache = { path = "vendor/string_cache-0.9.0" }
+# Keep generated PHF tables compatible while using checked hash input loads.
+siphasher = { path = "vendor/siphasher-1.0.4" }
 # Shared checked token strings across exports, PDF validation and selector consumers.
 cssparser = { path = "vendor/cssparser-0.37.0" }
 # 0.7.0 selects Linux interface binding on iOS; use Apple's indexed binding.
