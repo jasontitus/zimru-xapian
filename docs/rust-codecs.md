@@ -63,3 +63,31 @@ The companion branch is `review/zimru-storage` and the MIT archive branch is `re
 * A bounded binary-tree match finder is an **experiment**. Its patch, harness and native controls travel with this checkout. The initial level-19 sample timings approached the native codec, with output-size differences below 1% on the first three samples. Apply in a separate worktree, review bounds and history, run upstream and large-item tests and compare full-archive CPU, peak RSS and ratio before integrating. [Writer experiment](review-data/zstd-writer-experiment.tar.gz)
 * The Linux compiler audit found active unsafe code in 18/30 reader dependency packages, 18/32 default writer packages, 15/27 Glass engine packages and 44/77 complete companion packages. The first-party regular binaries, archive codecs and Glass code had zero reported unsafe sites. The optional C ABI has 182. Counts exclude the prebuilt standard library. A Unicode 18 normalization alternative matched ICU4X on 1,112,064 scalars and 20,171 conformance rows but took around 1.75–2.36 times as long in initial text timings. ICU4X remains in the GPL search engine. [Compiler audit](review-data/codec-trust.json)
 * On the first checkpoint the reader/default/all-feature test suites passed 104/174/184 tests respectively, plus 6/7/7 doctests. The vendor passed 52 tests. The final two edits refine XZ decoder memory checks and the single-lane Zstandard window. Repeat the complete paired validation on the exact final commits after any subsequent performance changes.
+
+## Experimental Zstandard sequence update order
+
+This experiment moves the three entropy-table state updates for the next sequence ahead of the current sequence’s literal and match copy. The baseline is `ff8b0ab`. The candidate keeps the offset checks, output limits, overlap handling and frame checks. A separate experiment buffered up to eight decoded sequences on the stack before copying their output.
+
+The isolated codec test decoded 11 Climate and 15 Wikipedia 100 frames. Each fresh process compared every output byte with a native Zstandard reference and checked the number of compressed bytes consumed. Six warm-up trials per mode and archive preceded 30 measured trials. The three modes occupied each position equally often. The timer included decoder construction and disposal. Loading files and comparing bytes were outside the timer.
+
+| Host and archive | Baseline (ms) | Earlier state update (ms) | Batch of eight (ms) |
+|---|---:|---:|---:|
+| Apple silicon Mac, Climate | 14.14 | 13.58 | 15.45 |
+| Apple silicon Mac, Wikipedia 100 | 27.57 | 26.57 | 31.14 |
+| Linux x86-64, Climate | 24.08 | 25.28 | 25.72 |
+| Linux x86-64, Wikipedia 100 | 42.66 | 45.51 | 47.01 |
+
+The direct-reader test opened each real archive in fresh processes and checked all length-framed output against the same reference hashes. The table gives median time for the 24 random article requests, capped at 64 KiB per item, using a 32 MiB cache. Native libzim 9.8.2 ran with eager search loading disabled. Eighteen measured rounds per archive and operation followed one warm-up round. A separate first-article and media-range comparison used the same processes-per-case policy.
+
+| Host and archive | Native libzim (ms) | Baseline Rust (ms) | Earlier state update (ms) |
+|---|---:|---:|---:|
+| Apple silicon Mac, Climate | 29.91 | 37.37 | 36.60 |
+| Apple silicon Mac, Wikipedia 100 | 47.50 | 52.86 | 50.77 |
+| Linux x86-64, Climate | 25.34 | 35.90 | 37.30 |
+| Linux x86-64, Wikipedia 100 | 48.96 | 56.78 | 59.74 |
+
+The Mac used Rust 1.99.1 and Linux used Rust 1.100.0. Other jobs shared the machines. The direction of the random-read change reversed between the two hosts. Keep the shipping reader on the baseline pending platform-specific evidence. The batch of eight took longer on both hosts. Mobile builds and user-visible article latency with the experimental decoder remain unmeasured.
+
+On the Mac, the candidate passed 53 vendored codec tests, 117 reader-only tests, 188 default tests and 197 all-feature tests (including doctests). A separate required-fixture run opened the two real Ray Charles archives and the Chinese Chemistry archive and passed all three tests.
+
+To reproduce the reader comparison, build the no-default-features reader driver against each source tree, using one release code-generation unit and 16 for `zstd-rs`. Run the `random_articles`, `first_article` and `media_ranges` requests for each archive with the native driver and both Rust drivers. Alternate order, record API time, whole-process CPU and peak memory, and compare the framed responses. The receipt includes both sets of frame hashes, executable and sequence-source hashes, each sample and each reference response hash. [Individual measurements](review-data/sequence-update-order.json.gz) · [Reference driver and build procedure](https://github.com/jasontitus/zimru-xapian/tree/69ca9fc2b0d57a7a10835eae66a439b353231fba/scripts/bench-archive-readers) · [Archive requests](https://github.com/jasontitus/zimru-xapian/blob/69ca9fc2b0d57a7a10835eae66a439b353231fba/docs/benchmarks/2026-11-18-linux-archive-readers.json)

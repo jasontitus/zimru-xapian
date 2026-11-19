@@ -132,12 +132,12 @@ pub fn decode(
                 }
             }
         };
-        ex.sequence(lits, lits_len, ll as usize, ml as usize, offset as usize)?;
         if i + 1 < n {
             ll_s = state_update(&lle, &mut r);
             ml_s = state_update(&mle, &mut r);
             of_s = state_update(&ofe, &mut r);
         }
+        ex.sequence(lits, lits_len, ll as usize, ml as usize, offset as usize)?;
     }
     r.refill();
     if !r.finished() {
