@@ -1,0 +1,652 @@
+{
+  "equal_output_sha256": {
+    "operations": "e30526cbe472bd8486804b56f631f0cf26c82da497f202e694fc79bf10d028bc",
+    "bytes": "2f89de0dd22dd87da544815c5e98bb8555ab97474f91d40a7a0c2e2cac6a365f",
+    "differential": "22a1ab0f6bc9a759e7ba1fbf2eb1c76fcfeecbda13c64a53e35465c3ec3a3c99",
+    "fragment": "4bd652eb6aa6dfba412687b04666a000dde572708656056d447f6978e71f4e43",
+    "limits": "840c67ee2d7c969030cfd8a6761ab9f3536d287bc5af4461a0782d3828cb67b3",
+    "export": [
+      "45322321003b2287607a7905a632d7e2951d238d4e8056ca1e77d2f07556fb48",
+      "2318aa647d170e72110aca88cb0e3ece6851a76b3203405aa9c983e94296868a",
+      "50518de49fa46d225a490dd467a02ef1555382633ab5943e7d1b125b1d98e6ae",
+      "ec58bd7fc03165a0af2819c181129b2049e79bfabc2b6491589968670fab2ec4"
+    ]
+  },
+  "input_sha256": [
+    "645f9ae6621dfde78a97382b79a6261023aace2a9fee7961412557678a04ea76",
+    "25f2fcafac543015ed87152d37a223b4c6d28f67d31e96b2eeee431234d67050",
+    "9b32c31e8b65cf69aeac2d48db69b657dad0b08593f0abf09cedec7a96d1326d",
+    "7d88c0710cb0ec79637638aa8b3b291e520ffad2d4d0ff519cca1b90a6575b97",
+    "48955ea19beff1f107817698a411a31a7d1059b5e03305b03b480fbe6d22ca59",
+    "dfd6d02f29119b096f42a94ea8f832176ceb49fed2f7f3e4a2e527d710ee8bc8"
+  ],
+  "timings": {
+    "0-climate.html": {
+      "samples": [
+        {
+          "control": {
+            "ns": 155707,
+            "peak_rss_bytes": 3670016
+          },
+          "candidate": {
+            "ns": 147516,
+            "peak_rss_bytes": 3653632
+          }
+        },
+        {
+          "candidate": {
+            "ns": 151101,
+            "peak_rss_bytes": 3735552
+          },
+          "control": {
+            "ns": 128518,
+            "peak_rss_bytes": 3653632
+          }
+        },
+        {
+          "control": {
+            "ns": 127413,
+            "peak_rss_bytes": 3588096
+          },
+          "candidate": {
+            "ns": 149353,
+            "peak_rss_bytes": 3670016
+          }
+        },
+        {
+          "candidate": {
+            "ns": 145856,
+            "peak_rss_bytes": 3670016
+          },
+          "control": {
+            "ns": 128285,
+            "peak_rss_bytes": 3620864
+          }
+        },
+        {
+          "control": {
+            "ns": 127922,
+            "peak_rss_bytes": 3588096
+          },
+          "candidate": {
+            "ns": 148987,
+            "peak_rss_bytes": 3784704
+          }
+        },
+        {
+          "candidate": {
+            "ns": 147582,
+            "peak_rss_bytes": 3768320
+          },
+          "control": {
+            "ns": 123604,
+            "peak_rss_bytes": 3555328
+          }
+        },
+        {
+          "control": {
+            "ns": 125627,
+            "peak_rss_bytes": 3637248
+          },
+          "candidate": {
+            "ns": 150106,
+            "peak_rss_bytes": 3735552
+          }
+        },
+        {
+          "candidate": {
+            "ns": 147003,
+            "peak_rss_bytes": 3735552
+          },
+          "control": {
+            "ns": 123715,
+            "peak_rss_bytes": 3555328
+          }
+        },
+        {
+          "control": {
+            "ns": 130261,
+            "peak_rss_bytes": 3653632
+          },
+          "candidate": {
+            "ns": 148198,
+            "peak_rss_bytes": 3751936
+          }
+        }
+      ],
+      "median_ns": {
+        "control": 127667.5,
+        "candidate": 148592.5
+      },
+      "paired_median_ratio": 1.173957253078937,
+      "faster": 0,
+      "output_sha256": [
+        "1929087a647c6c3924484f0cae1f19e07001504603ecfaa0f8f73489d56633b5"
+      ]
+    },
+    "1-nollywood.html": {
+      "samples": [
+        {
+          "control": {
+            "ns": 751016,
+            "peak_rss_bytes": 4325376
+          },
+          "candidate": {
+            "ns": 918458,
+            "peak_rss_bytes": 4636672
+          }
+        },
+        {
+          "candidate": {
+            "ns": 934061,
+            "peak_rss_bytes": 4521984
+          },
+          "control": {
+            "ns": 772134,
+            "peak_rss_bytes": 4308992
+          }
+        },
+        {
+          "control": {
+            "ns": 776186,
+            "peak_rss_bytes": 4358144
+          },
+          "candidate": {
+            "ns": 914503,
+            "peak_rss_bytes": 4620288
+          }
+        },
+        {
+          "candidate": {
+            "ns": 916997,
+            "peak_rss_bytes": 4620288
+          },
+          "control": {
+            "ns": 774813,
+            "peak_rss_bytes": 4308992
+          }
+        },
+        {
+          "control": {
+            "ns": 778631,
+            "peak_rss_bytes": 4341760
+          },
+          "candidate": {
+            "ns": 913756,
+            "peak_rss_bytes": 4603904
+          }
+        },
+        {
+          "candidate": {
+            "ns": 922670,
+            "peak_rss_bytes": 4620288
+          },
+          "control": {
+            "ns": 771503,
+            "peak_rss_bytes": 4407296
+          }
+        },
+        {
+          "control": {
+            "ns": 778914,
+            "peak_rss_bytes": 4308992
+          },
+          "candidate": {
+            "ns": 926871,
+            "peak_rss_bytes": 5226496
+          }
+        },
+        {
+          "candidate": {
+            "ns": 911563,
+            "peak_rss_bytes": 4603904
+          },
+          "control": {
+            "ns": 764762,
+            "peak_rss_bytes": 4308992
+          }
+        },
+        {
+          "control": {
+            "ns": 784279,
+            "peak_rss_bytes": 4833280
+          },
+          "candidate": {
+            "ns": 925263,
+            "peak_rss_bytes": 4603904
+          }
+        }
+      ],
+      "median_ns": {
+        "control": 775499.5,
+        "candidate": 919833.5
+      },
+      "paired_median_ratio": 1.1867302194308416,
+      "faster": 0,
+      "output_sha256": [
+        "710a8c1b0674abbc812a07fc7382005edc5c6496991bf56231f25e28fbb04d2a"
+      ]
+    },
+    "2-lipsum.html": {
+      "samples": [
+        {
+          "control": {
+            "ns": 13417,
+            "peak_rss_bytes": 3096576
+          },
+          "candidate": {
+            "ns": 15771,
+            "peak_rss_bytes": 3080192
+          }
+        },
+        {
+          "candidate": {
+            "ns": 15184,
+            "peak_rss_bytes": 3096576
+          },
+          "control": {
+            "ns": 13822,
+            "peak_rss_bytes": 3096576
+          }
+        },
+        {
+          "control": {
+            "ns": 13748,
+            "peak_rss_bytes": 3096576
+          },
+          "candidate": {
+            "ns": 15825,
+            "peak_rss_bytes": 3096576
+          }
+        },
+        {
+          "candidate": {
+            "ns": 15738,
+            "peak_rss_bytes": 3096576
+          },
+          "control": {
+            "ns": 13987,
+            "peak_rss_bytes": 3096576
+          }
+        },
+        {
+          "control": {
+            "ns": 13517,
+            "peak_rss_bytes": 3096576
+          },
+          "candidate": {
+            "ns": 15330,
+            "peak_rss_bytes": 3096576
+          }
+        },
+        {
+          "candidate": {
+            "ns": 15898,
+            "peak_rss_bytes": 3080192
+          },
+          "control": {
+            "ns": 13609,
+            "peak_rss_bytes": 3129344
+          }
+        },
+        {
+          "control": {
+            "ns": 13650,
+            "peak_rss_bytes": 3112960
+          },
+          "candidate": {
+            "ns": 15812,
+            "peak_rss_bytes": 3112960
+          }
+        },
+        {
+          "candidate": {
+            "ns": 15572,
+            "peak_rss_bytes": 3096576
+          },
+          "control": {
+            "ns": 13487,
+            "peak_rss_bytes": 3129344
+          }
+        },
+        {
+          "control": {
+            "ns": 13773,
+            "peak_rss_bytes": 3096576
+          },
+          "candidate": {
+            "ns": 16127,
+            "peak_rss_bytes": 3112960
+          }
+        }
+      ],
+      "median_ns": {
+        "control": 13699.0,
+        "candidate": 15775.0
+      },
+      "paired_median_ratio": 1.1528349161497102,
+      "faster": 0,
+      "output_sha256": [
+        "8c54f8aa00a6f6444ffc2e9d3d58c22d3a45e7c14b57d50fedec53bcc9df33d6"
+      ]
+    },
+    "3-lipsum-zh.html": {
+      "samples": [
+        {
+          "control": {
+            "ns": 4980,
+            "peak_rss_bytes": 2998272
+          },
+          "candidate": {
+            "ns": 5768,
+            "peak_rss_bytes": 3031040
+          }
+        },
+        {
+          "candidate": {
+            "ns": 5609,
+            "peak_rss_bytes": 3031040
+          },
+          "control": {
+            "ns": 4854,
+            "peak_rss_bytes": 3014656
+          }
+        },
+        {
+          "control": {
+            "ns": 4812,
+            "peak_rss_bytes": 2998272
+          },
+          "candidate": {
+            "ns": 5756,
+            "peak_rss_bytes": 3063808
+          }
+        },
+        {
+          "candidate": {
+            "ns": 5914,
+            "peak_rss_bytes": 3047424
+          },
+          "control": {
+            "ns": 5223,
+            "peak_rss_bytes": 3014656
+          }
+        },
+        {
+          "control": {
+            "ns": 4807,
+            "peak_rss_bytes": 3014656
+          },
+          "candidate": {
+            "ns": 5709,
+            "peak_rss_bytes": 3047424
+          }
+        },
+        {
+          "candidate": {
+            "ns": 5778,
+            "peak_rss_bytes": 3047424
+          },
+          "control": {
+            "ns": 4782,
+            "peak_rss_bytes": 3014656
+          }
+        },
+        {
+          "control": {
+            "ns": 4881,
+            "peak_rss_bytes": 3014656
+          },
+          "candidate": {
+            "ns": 5711,
+            "peak_rss_bytes": 3063808
+          }
+        },
+        {
+          "candidate": {
+            "ns": 5726,
+            "peak_rss_bytes": 3031040
+          },
+          "control": {
+            "ns": 4868,
+            "peak_rss_bytes": 3014656
+          }
+        },
+        {
+          "control": {
+            "ns": 4863,
+            "peak_rss_bytes": 3014656
+          },
+          "candidate": {
+            "ns": 5781,
+            "peak_rss_bytes": 3047424
+          }
+        }
+      ],
+      "median_ns": {
+        "control": 4858.5,
+        "candidate": 5741.0
+      },
+      "paired_median_ratio": 1.181948050971271,
+      "faster": 0,
+      "output_sha256": [
+        "888421ab0895e0d73de3739fa965294804090e2fa8db1efb8da4e0e187813f87"
+      ]
+    },
+    "bounded-sanitizer-four": {
+      "samples": [
+        {
+          "control": {
+            "ns": 1769572,
+            "peak_rss_bytes": 4931584
+          },
+          "candidate": {
+            "ns": 1962489,
+            "peak_rss_bytes": 5177344
+          }
+        },
+        {
+          "candidate": {
+            "ns": 1909451,
+            "peak_rss_bytes": 4734976
+          },
+          "control": {
+            "ns": 1770534,
+            "peak_rss_bytes": 4571136
+          }
+        },
+        {
+          "control": {
+            "ns": 1776027,
+            "peak_rss_bytes": 4538368
+          },
+          "candidate": {
+            "ns": 1986572,
+            "peak_rss_bytes": 5210112
+          }
+        },
+        {
+          "candidate": {
+            "ns": 1946229,
+            "peak_rss_bytes": 5128192
+          },
+          "control": {
+            "ns": 1810923,
+            "peak_rss_bytes": 4849664
+          }
+        },
+        {
+          "control": {
+            "ns": 1801013,
+            "peak_rss_bytes": 4833280
+          },
+          "candidate": {
+            "ns": 1984520,
+            "peak_rss_bytes": 5079040
+          }
+        },
+        {
+          "candidate": {
+            "ns": 1917916,
+            "peak_rss_bytes": 4833280
+          },
+          "control": {
+            "ns": 1772177,
+            "peak_rss_bytes": 4587520
+          }
+        },
+        {
+          "control": {
+            "ns": 1752972,
+            "peak_rss_bytes": 4915200
+          },
+          "candidate": {
+            "ns": 1932972,
+            "peak_rss_bytes": 4833280
+          }
+        },
+        {
+          "candidate": {
+            "ns": 2003649,
+            "peak_rss_bytes": 4734976
+          },
+          "control": {
+            "ns": 1771513,
+            "peak_rss_bytes": 4931584
+          }
+        },
+        {
+          "control": {
+            "ns": 1780156,
+            "peak_rss_bytes": 4931584
+          },
+          "candidate": {
+            "ns": 1972090,
+            "peak_rss_bytes": 5210112
+          }
+        }
+      ],
+      "median_ns": {
+        "control": 1774102.0,
+        "candidate": 1959159.5
+      },
+      "paired_median_ratio": 1.1022868747717212,
+      "faster": 0,
+      "output_sha256": [
+        "45322321003b2287607a7905a632d7e2951d238d4e8056ca1e77d2f07556fb48",
+        "2318aa647d170e72110aca88cb0e3ece6851a76b3203405aa9c983e94296868a",
+        "50518de49fa46d225a490dd467a02ef1555382633ab5943e7d1b125b1d98e6ae",
+        "ec58bd7fc03165a0af2819c181129b2049e79bfabc2b6491589968670fab2ec4"
+      ]
+    }
+  },
+  "app_base": "18388c223c21c4d7921c105ead667c893fe152d5",
+  "host": {
+    "platform": "macOS 27.2.1 arm64",
+    "rustc": "rustc 1.99.1 (58cf8f9c3 2026-10-13) (Homebrew)",
+    "cargo": "cargo 1.99.1 (5f94df478 2026-08-27) (Homebrew)"
+  },
+  "binaries": {
+    "bounded-control/export": "11b2c4f6d4d40c4e957ae4c6e00842c2598340dd45b10bee55e631dc17aac651",
+    "bounded-control/limits": "266afe7b6ee78e1bb20224669e567fb3a2791eed2c7c38e18fd7fcef9486aed7",
+    "bounded-candidate/export": "74aff7a7ea1d2fae0f4ca7208347dc9c139806505a10098a40ea05df0956f137",
+    "bounded-candidate/limits": "733a76f5d4325789fecd955c7ee8c7ccf3337f077c4991787772205424521930",
+    "parser-control/chunk_bench": "5b48d28d71cce16ad6a2d04dcda60d5ac61865141295ee29309901fcaaa1f1fe",
+    "parser-control/bytes": "8f949c119a702b6f89fd6c5c3702906ce066fbce714008e78a90d76a442abf2b",
+    "parser-control/operations": "5962e3290c0763ee30c8afa351e18e9b6af7717848a1b53270fbe40519543e83",
+    "parser-control/differential": "60869c3286a06e06f6b838671b9aa823e89e65dea442afed4a4a4a9cf04e915d",
+    "parser-control/fragment": "52bc2ebef6ef96fa1d2d65341ae0cebf9c420911e9b1be0a3897ed3aa91e72cc",
+    "parser-candidate/chunk_bench": "0e492e41549f28107245638cd471a1d9d7ab559da832c3afdc328d8e3319277a",
+    "parser-candidate/bytes": "776db0f80a3d8da5057e4564abc28cdb49b73a0855f4e8950c6f63ca3ba75640",
+    "parser-candidate/operations": "3c9d282c4b8e675a2e5068a75684082df8e66a8c81a0ffc172e95da0c5202dbd",
+    "parser-candidate/differential": "5db7a826d1040d7034a18f9269b4639d25eba87c15bd92e933194b8061b0a743",
+    "parser-candidate/fragment": "060e0b895b27f76567a93ef2fd22609be5c523bc5ccbd840b0116d4eddb4436f"
+  },
+  "sources": {
+    "experiments/html-storage/tendril/src/lib.rs": "4c50331f78780f441d0f7afaeac765b9d874b75ea2844763f9e11f39da0c2110",
+    "experiments/html-storage/tendril/src/stream.rs": "27f6c89997d1a995d4b6eda5f95d319f44ed120355a3978a0082760c7dbf8cd4",
+    "src-tauri/vendor/html5ever-0.39.0/src/tokenizer/mod.rs": "ced32114915ce1664a93d4a5372c51082ca4f97f6ccb223009e2fe34f9c4f32b",
+    "src-tauri/vendor/markup5ever-0.39.0/util/buffer_queue.rs": "71f1879dffcf746b885733481b4f71a068ebd5eb26ad438e7955bb449b64c80c",
+    "src-tauri/src/native_pdf/live.rs": "ef064f6757997a24ffdf9051fe2b90aeca50fe567e80b20c5ac3394d619e0a58",
+    "src-tauri/src/exports.rs": "e0570b807ebe8abfe65bba8ad32d1fdb91db4c64ea1d078b743aa2b867d609c5",
+    "src-tauri/src/cpu_time.rs": "0e6e507bf234a11d84b20a256de8e5f955997ff1f520aa025e0c3161524eba8e"
+  },
+  "input_labels": [
+    "climate.html",
+    "nollywood.html",
+    "bridge-0.html",
+    "bridge-1.html",
+    "modeled-climate.html",
+    "modeled-nollywood.html"
+  ],
+  "comparison_check_hashes": {
+    "operations": [
+      "UTF-8 carry and errors 61710985c3ac8741",
+      "Mutable UTF-8 ranges 0f60ca221feac9c4"
+    ],
+    "bytes": "587599 6b70ca35a0f17e81"
+  },
+  "linux_earlier_source": {
+    "scanner": "0f7a2295d2fd6b50796078c93d2545fbab28628be338b8c91d2e2cdf5df9857f",
+    "storage_lib": "5d316be7ec4e548914f803cec66f3a120728a8f7f64133392f38f018af8de3e6",
+    "storage_stream": "27f6c89997d1a995d4b6eda5f95d319f44ed120355a3978a0082760c7dbf8cd4",
+    "held_out_articles": {
+      "held-climate-3.html": {
+        "archive": "wikipedia_en_climate_change_mini_2024-06.zim",
+        "archive_sha256": "3485a2c475a2356331f33f137ce26ed7116e62c7062d73a7773362d6dff005f4",
+        "item": {
+          "path": "Land_cover",
+          "sha256": "087b8e53dce024959e7ec995658c3f5bc33e30f1c7af97f3da9d6c1adfc70748",
+          "bytes": 4720
+        }
+      },
+      "held-climate-12.html": {
+        "archive": "wikipedia_en_climate_change_mini_2024-06.zim",
+        "archive_sha256": "3485a2c475a2356331f33f137ce26ed7116e62c7062d73a7773362d6dff005f4",
+        "item": {
+          "path": "Nationally_determined_contribution",
+          "sha256": "b11aa1df61df0c3825014e788d1741a514b779bf6752c824a6ecf9c2d566059f",
+          "bytes": 6107
+        }
+      },
+      "held-climate-21.html": {
+        "archive": "wikipedia_en_climate_change_mini_2024-06.zim",
+        "archive_sha256": "3485a2c475a2356331f33f137ce26ed7116e62c7062d73a7773362d6dff005f4",
+        "item": {
+          "path": "Greenhouse_gas_emissions_by_Russia",
+          "sha256": "7dab17c6a2f1394b8bdc7591437511255f66317a271d71679546e8b08cec73ea",
+          "bytes": 7187
+        }
+      },
+      "held-wiki-3.html": {
+        "archive": "wikipedia_en_100_maxi_2024-01.zim",
+        "archive_sha256": "bde9d73bb1a6b959af6cf4f00ed8f6aac6cf7f4392e28a16a46cd77228b16613",
+        "item": {
+          "path": "A/Elizabeth_II",
+          "sha256": "dac495b8da217f6f4e12596768700bb6ad2568acf36a1993eee510dd9222c1b0",
+          "bytes": 580073
+        }
+      },
+      "held-wiki-12.html": {
+        "archive": "wikipedia_en_100_maxi_2024-01.zim",
+        "archive_sha256": "bde9d73bb1a6b959af6cf4f00ed8f6aac6cf7f4392e28a16a46cd77228b16613",
+        "item": {
+          "path": "A/List_of_national_parks_of_the_United_States",
+          "sha256": "263ac7c377dfcbc99a2d4c2ae71418ad5a2eb4a4ed8345a03d209b6c1e937f6f",
+          "bytes": 281698
+        }
+      },
+      "held-wiki-21.html": {
+        "archive": "wikipedia_en_100_maxi_2024-01.zim",
+        "archive_sha256": "bde9d73bb1a6b959af6cf4f00ed8f6aac6cf7f4392e28a16a46cd77228b16613",
+        "item": {
+          "path": "A/Elvis_Presley",
+          "sha256": "7c5c078c94fda61829f5d239a226d759c8951596abc938fef88a1333e6ca89d1",
+          "bytes": 614430
+        }
+      }
+    },
+    "original_results_file_sha256": "3028a3fe9be7545722f581cbfce24dab6bbcc51141ccaa58e2fbf2e51e81bb71"
+  },
+  "mac_method": "Row 0 of nine alternating process pairs is discarded. Each measured ns value is per complete parse across 200 calls, or per batch of four sanitizations across 12 passes. RSS is per-process peak in bytes, including setup and validation. Disposal is included in timing, initial reading and validation are outside."
+}

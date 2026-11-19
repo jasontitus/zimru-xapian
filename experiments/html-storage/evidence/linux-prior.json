@@ -1,0 +1,1213 @@
+{
+  "machine": "x86_64",
+  "cargo": "cargo 1.97.1 (c980f4866 2026-06-30)",
+  "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
+  "binaries": {
+    "whole-control": "1b3582cba4abf1de7eaae500263a24b3ca27a6556eba960c9beb3261138fd05b",
+    "chunk-control": "bdd04cb5b484bd5b6c89eef2bc7db311605450d7c40c2ca0ad08f51ace0c59fe",
+    "whole-candidate": "0b27f0045204d820913fe80a802446c7cfa98b681347a94c84dfa890ed0be034",
+    "chunk-candidate": "625ad248b91fcf5b287d3caa394d777cfd2c2baf53001bd96cf9a56615a28405"
+  },
+  "inputs": {
+    "held-climate-12.html": "b11aa1df61df0c3825014e788d1741a514b779bf6752c824a6ecf9c2d566059f",
+    "held-climate-21.html": "7dab17c6a2f1394b8bdc7591437511255f66317a271d71679546e8b08cec73ea",
+    "held-climate-3.html": "087b8e53dce024959e7ec995658c3f5bc33e30f1c7af97f3da9d6c1adfc70748",
+    "held-wiki-12.html": "263ac7c377dfcbc99a2d4c2ae71418ad5a2eb4a4ed8345a03d209b6c1e937f6f",
+    "held-wiki-21.html": "7c5c078c94fda61829f5d239a226d759c8951596abc938fef88a1333e6ca89d1",
+    "held-wiki-3.html": "dac495b8da217f6f4e12596768700bb6ad2568acf36a1993eee510dd9222c1b0",
+    "climate.html": "645f9ae6621dfde78a97382b79a6261023aace2a9fee7961412557678a04ea76",
+    "lipsum-zh.html": "fafe3ed44b07f9cdb0a3ca5c010a3a73cc2534b64605593e71cc70a8cf8e27e4",
+    "lipsum.html": "f37900ddb4ee463b9aa3191297bc1a4320b94bc72ee630de01882b50eb241740",
+    "medium-fragment.html": "d21ab12c5e538ae48af6df7ee7d7939c6fe3b2d1e36b5874a3bbb957847ddba0",
+    "nollywood.html": "25f2fcafac543015ed87152d37a223b4c6d28f67d31e96b2eeee431234d67050",
+    "small-fragment.html": "3825226a96ac919b0a69ae98e8547a5430214b16e56497570d382720af2bfca3",
+    "strong.html": "5adb31981cca062df929353c60dfa1c7fb91170b5a389a13c8be6555a4cf107d",
+    "tiny-fragment.html": "9cc2d58507945020d4d206738c8f166a618dc15161609935ab1975b913967edf"
+  },
+  "results": {
+    "whole:held-climate-12.html": {
+      "samples_ns_per_parse": [
+        {
+          "control": 108999,
+          "candidate": 134034
+        },
+        {
+          "candidate": 133122,
+          "control": 104734
+        },
+        {
+          "control": 105428,
+          "candidate": 130953
+        },
+        {
+          "candidate": 133817,
+          "control": 106774
+        },
+        {
+          "control": 106135,
+          "candidate": 131215
+        },
+        {
+          "candidate": 130795,
+          "control": 104492
+        },
+        {
+          "control": 104877,
+          "candidate": 132313
+        },
+        {
+          "candidate": 135388,
+          "control": 106261
+        },
+        {
+          "control": 104580,
+          "candidate": 132104
+        }
+      ],
+      "median_paired_ratio": 1.2574374772787982,
+      "output": "409edecbda989f2414b1b16d8fae261d77e8ba0770e510ec0b7dcabce1274ea4"
+    },
+    "chunk:held-climate-12.html": {
+      "samples_ns_per_parse": [
+        {
+          "control": 119340,
+          "candidate": 156864
+        },
+        {
+          "candidate": 158411,
+          "control": 118157
+        },
+        {
+          "control": 119666,
+          "candidate": 157113
+        },
+        {
+          "candidate": 160952,
+          "control": 121461
+        },
+        {
+          "control": 117650,
+          "candidate": 156717
+        },
+        {
+          "candidate": 155267,
+          "control": 116973
+        },
+        {
+          "control": 117309,
+          "candidate": 158705
+        },
+        {
+          "candidate": 165479,
+          "control": 118635
+        },
+        {
+          "control": 119662,
+          "candidate": 160594
+        }
+      ],
+      "median_paired_ratio": 1.336371755493218,
+      "output": "409edecbda989f2414b1b16d8fae261d77e8ba0770e510ec0b7dcabce1274ea4"
+    },
+    "whole:held-climate-21.html": {
+      "samples_ns_per_parse": [
+        {
+          "control": 108733,
+          "candidate": 134573
+        },
+        {
+          "candidate": 139360,
+          "control": 109955
+        },
+        {
+          "control": 108196,
+          "candidate": 134706
+        },
+        {
+          "candidate": 136261,
+          "control": 109005
+        },
+        {
+          "control": 110406,
+          "candidate": 135379
+        },
+        {
+          "candidate": 136642,
+          "control": 110161
+        },
+        {
+          "control": 111841,
+          "candidate": 139506
+        },
+        {
+          "candidate": 139559,
+          "control": 109216
+        },
+        {
+          "control": 108885,
+          "candidate": 139537
+        }
+      ],
+      "median_paired_ratio": 1.2487018337706526,
+      "output": "05d7c9db4f8db77dcdc5e104793c8e069511b3f047e62d5edd301ef1f9c009cb"
+    },
+    "chunk:held-climate-21.html": {
+      "samples_ns_per_parse": [
+        {
+          "control": 127644,
+          "candidate": 167894
+        },
+        {
+          "candidate": 169199,
+          "control": 127578
+        },
+        {
+          "control": 128623,
+          "candidate": 169321
+        },
+        {
+          "candidate": 168063,
+          "control": 127299
+        },
+        {
+          "control": 127391,
+          "candidate": 171024
+        },
+        {
+          "candidate": 169989,
+          "control": 128498
+        },
+        {
+          "control": 129510,
+          "candidate": 172004
+        },
+        {
+          "candidate": 177898,
+          "control": 125582
+        },
+        {
+          "control": 130344,
+          "candidate": 180228
+        }
+      ],
+      "median_paired_ratio": 1.3271766464847787,
+      "output": "05d7c9db4f8db77dcdc5e104793c8e069511b3f047e62d5edd301ef1f9c009cb"
+    },
+    "whole:held-climate-3.html": {
+      "samples_ns_per_parse": [
+        {
+          "control": 80589,
+          "candidate": 100646
+        },
+        {
+          "candidate": 101495,
+          "control": 81884
+        },
+        {
+          "control": 81378,
+          "candidate": 103489
+        },
+        {
+          "candidate": 102565,
+          "control": 82273
+        },
+        {
+          "control": 82029,
+          "candidate": 101940
+        },
+        {
+          "candidate": 101614,
+          "control": 82004
+        },
+        {
+          "control": 81291,
+          "candidate": 101135
+        },
+        {
+          "candidate": 103417,
+          "control": 83237
+        },
+        {
+          "control": 82306,
+          "candidate": 102613
+        }
+      ],
+      "median_paired_ratio": 1.2434209466782966,
+      "output": "87fb5bd9f88bb1fbc82986f3418bbcfa585d7ac463b71a3b0dad33c022cc85d9"
+    },
+    "chunk:held-climate-3.html": {
+      "samples_ns_per_parse": [
+        {
+          "control": 92079,
+          "candidate": 124913
+        },
+        {
+          "candidate": 123728,
+          "control": 92581
+        },
+        {
+          "control": 93357,
+          "candidate": 125118
+        },
+        {
+          "candidate": 123849,
+          "control": 91696
+        },
+        {
+          "control": 92906,
+          "candidate": 123966
+        },
+        {
+          "candidate": 125758,
+          "control": 92882
+        },
+        {
+          "control": 91266,
+          "candidate": 127315
+        },
+        {
+          "candidate": 124519,
+          "control": 91734
+        },
+        {
+          "control": 92958,
+          "candidate": 126929
+        }
+      ],
+      "median_paired_ratio": 1.3523011362920143,
+      "output": "87fb5bd9f88bb1fbc82986f3418bbcfa585d7ac463b71a3b0dad33c022cc85d9"
+    },
+    "whole:held-wiki-12.html": {
+      "samples_ns_per_parse": [
+        {
+          "control": 5796490,
+          "candidate": 7178620
+        },
+        {
+          "candidate": 7154672,
+          "control": 5821329
+        },
+        {
+          "control": 5745274,
+          "candidate": 7163961
+        },
+        {
+          "candidate": 7190703,
+          "control": 5930754
+        },
+        {
+          "control": 5858045,
+          "candidate": 8428953
+        },
+        {
+          "candidate": 7204608,
+          "control": 5806541
+        },
+        {
+          "control": 5874506,
+          "candidate": 7202616
+        },
+        {
+          "candidate": 7163871,
+          "control": 5891565
+        },
+        {
+          "control": 5898600,
+          "candidate": 7180922
+        }
+      ],
+      "median_paired_ratio": 1.2275623597807734,
+      "output": "0e4cc8f7afc12cf4be42590544be62475feaf3dd448dc88fa92b92c210446671"
+    },
+    "chunk:held-wiki-12.html": {
+      "samples_ns_per_parse": [
+        {
+          "control": 6544289,
+          "candidate": 8655061
+        },
+        {
+          "candidate": 8706134,
+          "control": 6476177
+        },
+        {
+          "control": 6870633,
+          "candidate": 9847192
+        },
+        {
+          "candidate": 8634693,
+          "control": 6574910
+        },
+        {
+          "control": 6529315,
+          "candidate": 9005501
+        },
+        {
+          "candidate": 8828116,
+          "control": 6654080
+        },
+        {
+          "control": 6524249,
+          "candidate": 8611286
+        },
+        {
+          "candidate": 8720072,
+          "control": 6559334
+        },
+        {
+          "control": 6536550,
+          "candidate": 8727489
+        }
+      ],
+      "median_paired_ratio": 1.3322985080846164,
+      "output": "0e4cc8f7afc12cf4be42590544be62475feaf3dd448dc88fa92b92c210446671"
+    },
+    "whole:held-wiki-21.html": {
+      "samples_ns_per_parse": [
+        {
+          "control": 11347638,
+          "candidate": 12744887
+        },
+        {
+          "candidate": 12871620,
+          "control": 10615773
+        },
+        {
+          "control": 11213302,
+          "candidate": 12744218
+        },
+        {
+          "candidate": 12810833,
+          "control": 10784036
+        },
+        {
+          "control": 11038041,
+          "candidate": 12786924
+        },
+        {
+          "candidate": 12716068,
+          "control": 10511471
+        },
+        {
+          "control": 10760720,
+          "candidate": 12742115
+        },
+        {
+          "candidate": 12834257,
+          "control": 10620001
+        },
+        {
+          "control": 11486065,
+          "candidate": 12712609
+        }
+      ],
+      "median_paired_ratio": 1.1860381969363307,
+      "output": "998b01a968d0de7d850a443309ee12a8d7559667eba8c6ff2edbc44b71e8824c"
+    },
+    "chunk:held-wiki-21.html": {
+      "samples_ns_per_parse": [
+        {
+          "control": 11819974,
+          "candidate": 15297437
+        },
+        {
+          "candidate": 15578058,
+          "control": 11968903
+        },
+        {
+          "control": 11859624,
+          "candidate": 16113208
+        },
+        {
+          "candidate": 15138043,
+          "control": 12443360
+        },
+        {
+          "control": 11916401,
+          "candidate": 15139275
+        },
+        {
+          "candidate": 15202254,
+          "control": 11883351
+        },
+        {
+          "control": 11781036,
+          "candidate": 16376754
+        },
+        {
+          "candidate": 15567651,
+          "control": 11796247
+        },
+        {
+          "control": 11759447,
+          "candidate": 15221315
+        }
+      ],
+      "median_paired_ratio": 1.2979673588368992,
+      "output": "998b01a968d0de7d850a443309ee12a8d7559667eba8c6ff2edbc44b71e8824c"
+    },
+    "whole:held-wiki-3.html": {
+      "samples_ns_per_parse": [
+        {
+          "control": 10458373,
+          "candidate": 12826297
+        },
+        {
+          "candidate": 14132756,
+          "control": 11390815
+        },
+        {
+          "control": 10435109,
+          "candidate": 12698905
+        },
+        {
+          "candidate": 12763545,
+          "control": 10414496
+        },
+        {
+          "control": 10460129,
+          "candidate": 12671670
+        },
+        {
+          "candidate": 12842501,
+          "control": 11190562
+        },
+        {
+          "control": 10609948,
+          "candidate": 12771868
+        },
+        {
+          "candidate": 12676432,
+          "control": 10500634
+        },
+        {
+          "control": 10373465,
+          "candidate": 12871290
+        }
+      ],
+      "median_paired_ratio": 1.2141830586927018,
+      "output": "fe6f1675a6e7a25200e82e226fc5d5d6a1cfb34e18bb2ff382514e1994d602d2"
+    },
+    "chunk:held-wiki-3.html": {
+      "samples_ns_per_parse": [
+        {
+          "control": 11563105,
+          "candidate": 15131043
+        },
+        {
+          "candidate": 15415699,
+          "control": 11510067
+        },
+        {
+          "control": 11535342,
+          "candidate": 15156600
+        },
+        {
+          "candidate": 14909578,
+          "control": 11560946
+        },
+        {
+          "control": 11556048,
+          "candidate": 16070614
+        },
+        {
+          "candidate": 14986372,
+          "control": 11595984
+        },
+        {
+          "control": 11516185,
+          "candidate": 14906171
+        },
+        {
+          "candidate": 15070856,
+          "control": 11559456
+        },
+        {
+          "control": 12443732,
+          "candidate": 15239429
+        }
+      ],
+      "median_paired_ratio": 1.2990678609293362,
+      "output": "fe6f1675a6e7a25200e82e226fc5d5d6a1cfb34e18bb2ff382514e1994d602d2"
+    },
+    "whole:climate.html": {
+      "samples_ns_per_parse": [
+        {
+          "control": 159368,
+          "candidate": 192628
+        },
+        {
+          "candidate": 199490,
+          "control": 164462
+        },
+        {
+          "control": 160642,
+          "candidate": 199540
+        },
+        {
+          "candidate": 196118,
+          "control": 163276
+        },
+        {
+          "control": 161765,
+          "candidate": 195840
+        },
+        {
+          "candidate": 198885,
+          "control": 159260
+        },
+        {
+          "control": 161069,
+          "candidate": 197037
+        },
+        {
+          "candidate": 193858,
+          "control": 160445
+        },
+        {
+          "control": 158911,
+          "candidate": 195418
+        }
+      ],
+      "median_paired_ratio": 1.2181466968751247,
+      "output": "1929087a647c6c3924484f0cae1f19e07001504603ecfaa0f8f73489d56633b5"
+    },
+    "chunk:climate.html": {
+      "samples_ns_per_parse": [
+        {
+          "control": 195730,
+          "candidate": 253498
+        },
+        {
+          "candidate": 249510,
+          "control": 198663
+        },
+        {
+          "control": 201459,
+          "candidate": 258146
+        },
+        {
+          "candidate": 248032,
+          "control": 199491
+        },
+        {
+          "control": 194626,
+          "candidate": 251240
+        },
+        {
+          "candidate": 246565,
+          "control": 201179
+        },
+        {
+          "control": 198992,
+          "candidate": 252920
+        },
+        {
+          "candidate": 251644,
+          "control": 204966
+        },
+        {
+          "control": 198068,
+          "candidate": 253385
+        }
+      ],
+      "median_paired_ratio": 1.263475934293017,
+      "output": "1929087a647c6c3924484f0cae1f19e07001504603ecfaa0f8f73489d56633b5"
+    },
+    "whole:lipsum-zh.html": {
+      "samples_ns_per_parse": [
+        {
+          "control": 1262,
+          "candidate": 1346
+        },
+        {
+          "candidate": 1421,
+          "control": 1265
+        },
+        {
+          "control": 1586,
+          "candidate": 1337
+        },
+        {
+          "candidate": 1682,
+          "control": 1207
+        },
+        {
+          "control": 1206,
+          "candidate": 1592
+        },
+        {
+          "candidate": 1293,
+          "control": 1206
+        },
+        {
+          "control": 1523,
+          "candidate": 1288
+        },
+        {
+          "candidate": 1299,
+          "control": 1351
+        },
+        {
+          "control": 1208,
+          "candidate": 1289
+        }
+      ],
+      "median_paired_ratio": 1.0695961418075188,
+      "output": "888421ab0895e0d73de3739fa965294804090e2fa8db1efb8da4e0e187813f87"
+    },
+    "chunk:lipsum-zh.html": {
+      "samples_ns_per_parse": [
+        {
+          "control": 6628,
+          "candidate": 7107
+        },
+        {
+          "candidate": 6609,
+          "control": 6807
+        },
+        {
+          "control": 6650,
+          "candidate": 6908
+        },
+        {
+          "candidate": 6610,
+          "control": 6903
+        },
+        {
+          "control": 6616,
+          "candidate": 6796
+        },
+        {
+          "candidate": 6614,
+          "control": 6898
+        },
+        {
+          "control": 6591,
+          "candidate": 6896
+        },
+        {
+          "candidate": 6714,
+          "control": 6782
+        },
+        {
+          "control": 6573,
+          "candidate": 6956
+        }
+      ],
+      "median_paired_ratio": 1.0085901153098553,
+      "output": "888421ab0895e0d73de3739fa965294804090e2fa8db1efb8da4e0e187813f87"
+    },
+    "whole:lipsum.html": {
+      "samples_ns_per_parse": [
+        {
+          "control": 2417,
+          "candidate": 2507
+        },
+        {
+          "candidate": 2480,
+          "control": 2663
+        },
+        {
+          "control": 2721,
+          "candidate": 2803
+        },
+        {
+          "candidate": 2812,
+          "control": 2396
+        },
+        {
+          "control": 2401,
+          "candidate": 2822
+        },
+        {
+          "candidate": 2787,
+          "control": 2681
+        },
+        {
+          "control": 2566,
+          "candidate": 2534
+        },
+        {
+          "candidate": 2499,
+          "control": 2702
+        },
+        {
+          "control": 2790,
+          "candidate": 2832
+        }
+      ],
+      "median_paired_ratio": 1.0225948714300959,
+      "output": "8c54f8aa00a6f6444ffc2e9d3d58c22d3a45e7c14b57d50fedec53bcc9df33d6"
+    },
+    "chunk:lipsum.html": {
+      "samples_ns_per_parse": [
+        {
+          "control": 19158,
+          "candidate": 18535
+        },
+        {
+          "candidate": 18885,
+          "control": 19688
+        },
+        {
+          "control": 18952,
+          "candidate": 18985
+        },
+        {
+          "candidate": 18264,
+          "control": 18685
+        },
+        {
+          "control": 18620,
+          "candidate": 18301
+        },
+        {
+          "candidate": 18316,
+          "control": 18765
+        },
+        {
+          "control": 19334,
+          "candidate": 19121
+        },
+        {
+          "candidate": 18930,
+          "control": 19243
+        },
+        {
+          "control": 19276,
+          "candidate": 18641
+        }
+      ],
+      "median_paired_ratio": 0.9801682208311405,
+      "output": "8c54f8aa00a6f6444ffc2e9d3d58c22d3a45e7c14b57d50fedec53bcc9df33d6"
+    },
+    "whole:medium-fragment.html": {
+      "samples_ns_per_parse": [
+        {
+          "control": 66581,
+          "candidate": 82013
+        },
+        {
+          "candidate": 80645,
+          "control": 65458
+        },
+        {
+          "control": 65402,
+          "candidate": 81766
+        },
+        {
+          "candidate": 80594,
+          "control": 63844
+        },
+        {
+          "control": 63999,
+          "candidate": 82069
+        },
+        {
+          "candidate": 82075,
+          "control": 65216
+        },
+        {
+          "control": 70553,
+          "candidate": 90549
+        },
+        {
+          "candidate": 91201,
+          "control": 72617
+        },
+        {
+          "control": 72582,
+          "candidate": 91160
+        }
+      ],
+      "median_paired_ratio": 1.2572344796044561,
+      "output": "9ba44008a3b7537b772959771f66cd10173103fbb8605a13a8860ae69b034ef4"
+    },
+    "chunk:medium-fragment.html": {
+      "samples_ns_per_parse": [
+        {
+          "control": 80030,
+          "candidate": 90277
+        },
+        {
+          "candidate": 92496,
+          "control": 78816
+        },
+        {
+          "control": 73357,
+          "candidate": 94848
+        },
+        {
+          "candidate": 93055,
+          "control": 73005
+        },
+        {
+          "control": 72294,
+          "candidate": 92141
+        },
+        {
+          "candidate": 91143,
+          "control": 69653
+        },
+        {
+          "control": 70138,
+          "candidate": 91031
+        },
+        {
+          "candidate": 91051,
+          "control": 69504
+        },
+        {
+          "control": 72659,
+          "candidate": 91712
+        }
+      ],
+      "median_paired_ratio": 1.2838016333180748,
+      "output": "9ba44008a3b7537b772959771f66cd10173103fbb8605a13a8860ae69b034ef4"
+    },
+    "whole:nollywood.html": {
+      "samples_ns_per_parse": [
+        {
+          "control": 995146,
+          "candidate": 1221345
+        },
+        {
+          "candidate": 1201385,
+          "control": 993113
+        },
+        {
+          "control": 1000320,
+          "candidate": 1200333
+        },
+        {
+          "candidate": 1217262,
+          "control": 995412
+        },
+        {
+          "control": 989705,
+          "candidate": 1211637
+        },
+        {
+          "candidate": 1205217,
+          "control": 1012318
+        },
+        {
+          "control": 997367,
+          "candidate": 1201100
+        },
+        {
+          "candidate": 1210096,
+          "control": 1021242
+        },
+        {
+          "control": 989992,
+          "candidate": 1251929
+        }
+      ],
+      "median_paired_ratio": 1.2069935807026968,
+      "output": "710a8c1b0674abbc812a07fc7382005edc5c6496991bf56231f25e28fbb04d2a"
+    },
+    "chunk:nollywood.html": {
+      "samples_ns_per_parse": [
+        {
+          "control": 1149934,
+          "candidate": 1419089
+        },
+        {
+          "candidate": 1447884,
+          "control": 1126880
+        },
+        {
+          "control": 1154181,
+          "candidate": 1441801
+        },
+        {
+          "candidate": 1451542,
+          "control": 1132426
+        },
+        {
+          "control": 1118108,
+          "candidate": 1422101
+        },
+        {
+          "candidate": 1453233,
+          "control": 1116862
+        },
+        {
+          "control": 1128810,
+          "candidate": 1416368
+        },
+        {
+          "candidate": 1434506,
+          "control": 1149662
+        },
+        {
+          "control": 1150418,
+          "candidate": 1428447
+        }
+      ],
+      "median_paired_ratio": 1.2633129919825523,
+      "output": "710a8c1b0674abbc812a07fc7382005edc5c6496991bf56231f25e28fbb04d2a"
+    },
+    "whole:small-fragment.html": {
+      "samples_ns_per_parse": [
+        {
+          "control": 6284,
+          "candidate": 7673
+        },
+        {
+          "candidate": 7398,
+          "control": 6574
+        },
+        {
+          "control": 6324,
+          "candidate": 7748
+        },
+        {
+          "candidate": 7692,
+          "control": 6430
+        },
+        {
+          "control": 6559,
+          "candidate": 7506
+        },
+        {
+          "candidate": 7723,
+          "control": 6548
+        },
+        {
+          "control": 6859,
+          "candidate": 7686
+        },
+        {
+          "candidate": 7749,
+          "control": 7598
+        },
+        {
+          "control": 7565,
+          "candidate": 8505
+        }
+      ],
+      "median_paired_ratio": 1.1348620114452919,
+      "output": "e76510912d2e540161875d5d8ac61f20017de575abefc76aa900e40b98e8da6e"
+    },
+    "chunk:small-fragment.html": {
+      "samples_ns_per_parse": [
+        {
+          "control": 8635,
+          "candidate": 10491
+        },
+        {
+          "candidate": 10506,
+          "control": 8726
+        },
+        {
+          "control": 8661,
+          "candidate": 10389
+        },
+        {
+          "candidate": 10445,
+          "control": 8755
+        },
+        {
+          "control": 8939,
+          "candidate": 10375
+        },
+        {
+          "candidate": 10461,
+          "control": 8628
+        },
+        {
+          "control": 8931,
+          "candidate": 10338
+        },
+        {
+          "candidate": 10409,
+          "control": 8603
+        },
+        {
+          "control": 8762,
+          "candidate": 10419
+        }
+      ],
+      "median_paired_ratio": 1.1962738101855597,
+      "output": "e76510912d2e540161875d5d8ac61f20017de575abefc76aa900e40b98e8da6e"
+    },
+    "whole:strong.html": {
+      "samples_ns_per_parse": [
+        {
+          "control": 51485,
+          "candidate": 61988
+        },
+        {
+          "candidate": 62573,
+          "control": 50942
+        },
+        {
+          "control": 50917,
+          "candidate": 58044
+        },
+        {
+          "candidate": 55764,
+          "control": 46270
+        },
+        {
+          "control": 45563,
+          "candidate": 56462
+        },
+        {
+          "candidate": 55707,
+          "control": 45794
+        },
+        {
+          "control": 46353,
+          "candidate": 56617
+        },
+        {
+          "candidate": 55911,
+          "control": 46139
+        },
+        {
+          "control": 45832,
+          "candidate": 55935
+        }
+      ],
+      "median_paired_ratio": 1.2184524550253748,
+      "output": "1c8baad36b6a22933440240c6abf9353fda144f360496e8f082379bf6cb30ccd"
+    },
+    "chunk:strong.html": {
+      "samples_ns_per_parse": [
+        {
+          "control": 54563,
+          "candidate": 82257
+        },
+        {
+          "candidate": 82294,
+          "control": 53376
+        },
+        {
+          "control": 53619,
+          "candidate": 82232
+        },
+        {
+          "candidate": 83705,
+          "control": 53232
+        },
+        {
+          "control": 53283,
+          "candidate": 83366
+        },
+        {
+          "candidate": 81888,
+          "control": 52771
+        },
+        {
+          "control": 51516,
+          "candidate": 80943
+        },
+        {
+          "candidate": 82313,
+          "control": 51527
+        },
+        {
+          "control": 53618,
+          "candidate": 82021
+        }
+      ],
+      "median_paired_ratio": 1.5581752325193392,
+      "output": "1c8baad36b6a22933440240c6abf9353fda144f360496e8f082379bf6cb30ccd"
+    },
+    "whole:tiny-fragment.html": {
+      "samples_ns_per_parse": [
+        {
+          "control": 1152,
+          "candidate": 1415
+        },
+        {
+          "candidate": 1367,
+          "control": 1320
+        },
+        {
+          "control": 1112,
+          "candidate": 1378
+        },
+        {
+          "candidate": 2410,
+          "control": 1120
+        },
+        {
+          "control": 1120,
+          "candidate": 1561
+        },
+        {
+          "candidate": 1369,
+          "control": 1120
+        },
+        {
+          "control": 1137,
+          "candidate": 1567
+        },
+        {
+          "candidate": 1377,
+          "control": 1138
+        },
+        {
+          "control": 1304,
+          "candidate": 1397
+        }
+      ],
+      "median_paired_ratio": 1.230765030832477,
+      "output": "ef9e0186d95cd8c4df9bacd5cb4ffc0c86c908813aa220c3b562d841539bbec4"
+    },
+    "chunk:tiny-fragment.html": {
+      "samples_ns_per_parse": [
+        {
+          "control": 1177,
+          "candidate": 1599
+        },
+        {
+          "candidate": 1409,
+          "control": 1234
+        },
+        {
+          "control": 1369,
+          "candidate": 1400
+        },
+        {
+          "candidate": 1428,
+          "control": 1375
+        },
+        {
+          "control": 1157,
+          "candidate": 1411
+        },
+        {
+          "candidate": 1593,
+          "control": 1162
+        },
+        {
+          "control": 1175,
+          "candidate": 1619
+        },
+        {
+          "candidate": 1400,
+          "control": 1175
+        },
+        {
+          "control": 1164,
+          "candidate": 1457
+        }
+      ],
+      "median_paired_ratio": 1.2055113187075892,
+      "output": "ef9e0186d95cd8c4df9bacd5cb4ffc0c86c908813aa220c3b562d841539bbec4"
+    }
+  },
+  "differential:differential": {
+    "sha256": "b3382b00598d50ef658a373d77a6ef2fe8d3ff28f0786cb71aa3471a0731ee7d",
+    "result": "Compared 1608 parse/token runs"
+  },
+  "differential:fragment": {
+    "sha256": "5627a2c573e50496ba49345bd7f6a54395e8bf7e440b70766fc512899b5e29f3",
+    "result": "Compared 1714 parse/token runs"
+  }
+}
