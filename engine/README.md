@@ -1,9 +1,9 @@
 # zimfile-xapian
 
-libzim's Xapian search indexes in pure Rust: a reimplementation, not
-bindings. It reads, searches and writes the single-file Glass databases Kiwix
-archives embed (`X/fulltext/xapian`, `X/title/xapian`), with libzim's
-semantics on Xapian 1.4.
+A Rust implementation of libzim's Xapian search indexes. It reads, searches
+and writes the single-file Glass databases Kiwix archives embed
+(`X/fulltext/xapian`, `X/title/xapian`) and targets the query subset used by
+libzim with Xapian 1.4.
 
 In this fork, `zimsearch` uses zimru to open the archive. The engine reads the embedded database through a `Source` and returns document paths such as `C/<path>`.
 
@@ -28,9 +28,10 @@ For interactive searches, `search_page(query, offset, limit, language, include_s
 
 ## Compatibility with libzim
 
-Searches rank like libzim on Xapian 1.4: the same query parsing, term
-generation (`removeAccents`, Xapian's word splitting, CJK n-grams, Snowball
-stemmers as Xapian 1.4 ships them), BM25 parameters, sort and collapse.
+The engine targets the query subset and ranking behavior used by libzim with
+Xapian 1.4. It implements accent removal, word splitting, CJK n-grams, BM25
+scoring, sorting and collapse. Rare-Han queries, unsupported stemmers and terms
+tied at the prefix expansion limit can return different results.
 
 The [standalone verification suite](../README.md#verify) compares regenerated terms, within-document frequencies and positions on two Kiwix archives. It checks 120 ordered top-ten results against libzim reference data. Native interoperability tests open both writers' databases in Xapian and search the packaged archives with libzim. The [review](../AUDIT.md) records the tested limits and compatibility differences.
 

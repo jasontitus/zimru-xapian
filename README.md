@@ -4,14 +4,16 @@ Two standalone GPL-3.0-or-later command-line tools for ZIM search indexes. `zims
 
 ## Build and search
 
-This review branch builds against the adjacent MIT `zimru` source tree at `a6d1b4ccd968c29420135fa3b70ced578509a1e8`. Clone the two branches of the private repository into sibling directories. The MIT branch retains its own history and license. Build with a current stable Rust toolchain and a system linker. The native interoperability tests also use a C/C++ toolchain and liblzma development files.
+The GPL workspace builds against the adjacent MIT `zimru` checkout at `../zimru`. Use `3861631f0e8302d765956f6acac73ed00c1b30b1` to reproduce the reviewed build. The MIT branch retains its own history and license. Build with a current stable Rust toolchain and a system linker. The native interoperability tests also use a C/C++ toolchain and liblzma development files.
 
 ```sh
-git clone -b codex/zimru-positioned-source https://github.com/jasontitus/zimru-xapian.git zimru
-git -C zimru checkout --detach a6d1b4ccd968c29420135fa3b70ced578509a1e8
-git clone -b codex/checked-unicode-tables https://github.com/jasontitus/zimru-xapian.git zimru-xapian
+git clone -b codex/zimru-reader-runtime https://github.com/jasontitus/zimru-xapian.git zimru
+git -C zimru checkout --detach 3861631f0e8302d765956f6acac73ed00c1b30b1
+git clone -b main https://github.com/jasontitus/zimru-xapian.git zimru-xapian
 cd zimru-xapian
 ```
+
+To reproduce the [main branch verification](AUDIT.md#main-branch-verification) at the exact tested GPL revision, run `git checkout --detach 380d84d7bb4ba9f30144462fd6bb18e932493fc0` from the `zimru-xapian` directory.
 
 Ordinary archive and Glass reads use positioned I/O on a single original source file. Compressed fallback language metadata uses the MIT reader's guarded interface. The archive library uses Rust codecs for Zstandard and XZ. The Glass reader inflates DEFLATE tags with miniz_oxide. [Codec review and session handoff](https://github.com/jasontitus/zimru-xapian/blob/ca5e62e965e0667120319906af2aee9791dc94fb/docs/rust-codecs.md) [Adversarial findings and performance measurements](https://github.com/jasontitus/zimru-xapian/blob/ca5e62e965e0667120319906af2aee9791dc94fb/docs/positioned-reader-review.md) · [Memory-safety review](https://github.com/jasontitus/zimru-xapian/blob/ca5e62e965e0667120319906af2aee9791dc94fb/docs/memory-safety-review.md)
 
